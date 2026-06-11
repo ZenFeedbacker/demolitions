@@ -330,9 +330,11 @@ function addMapToggle(box, rows, runId) {
   box.insertBefore(mapDiv, box.querySelector(".tablewrap"));
   box.insertBefore(legend, box.querySelector(".tablewrap"));
 
-  let map = null, cluster = null;
+  let map = null, cluster = null, skipFit = false;
+  const markerByRow = new Map();
   function update(view) {
     cluster.clearLayers();
+    markerByRow.clear();
     const pts = view.filter(r => r.lat != null);
     for (const r of pts) {
       const m = L.circleMarker([r.lat, r.lon], {
@@ -346,10 +348,14 @@ function addMapToggle(box, rows, runId) {
         `${esc(r.perigrafi)}<br>` +
         `<a href="https://diavgeia.gov.gr/decision/view/${esc(r.ada)}" target="_blank">${esc(r.ada)}</a>` +
         (r.pdf_path ? ` · <a href="/runs/${esc(runId)}/${esc(r.pdf_path)}" target="_blank">PDF</a>` : "") +
+        ` · <a href="https://www.openstreetmap.org/?mlat=${r.lat}&mlon=${r.lon}#map=18/${r.lat}/${r.lon}" target="_blank">OSM</a>` +
         ` · <span style="color:${PREC_COLORS[r.precision] || "#8a8273"}">${esc(r.precision)}</span>`);
       cluster.addLayer(m);
+      markerByRow.set(r, m);
     }
-    if (pts.length) map.fitBounds(cluster.getBounds().pad(0.15), { maxZoom: 16 });
+    if (pts.length && !skipFit) {
+      map.fitBounds(cluster.getBounds().pad(0.15), { maxZoom: 16 });
+    }
     const missing = view.length - pts.length;
     box.querySelector("#tnote").textContent = missing
       ? `${pts.length} σημεία στον χάρτη — ${missing} άδειες χωρίς συντεταγμένες δεν εμφανίζονται.`
@@ -395,9 +401,16 @@ function addMapToggle(box, rows, runId) {
   }
   btnTable.onclick = () => show(false);
   btnMap.onclick = () => show(true);
+  box._showOnMap = r => {
+    skipFit = true;
+    show(true);
+    skipFit = false;
+    const m = markerByRow.get(r);
+    if (m) cluster.zoomToShowLayer(m, () => m.openPopup());
+  };
 }
 
-// [επικεφαλίδα, τιμή, css class, σύνδεσμος, τιμή ταξινόμησης]
+// [επικεφαλίδα, τιμή, css class, σύνδεσμος, τιμή ταξινόμησης, ενέργεια]
 const COLS = [
   ["Ημ/νία", r => dmy(r.date), null, null, r => r.date],
   ["Δήμος", r => r.dimos],
@@ -405,8 +418,8 @@ const COLS = [
   ["Οδός", r => (r.odos + " " + (r.ar_apo || "")).trim()],
   ["Όροφοι", r => r.orofoi ?? ""],
   ["Περιγραφή", r => r.perigrafi, "desc"],
-  ["Συντ/νες", r => r.lat ? "📍" : "", null,
-    r => r.lat ? `https://www.openstreetmap.org/?mlat=${r.lat}&mlon=${r.lon}#map=18/${r.lat}/${r.lon}` : null],
+  ["Χάρτης", r => r.lat != null ? "📍" : "", null, null,
+    r => r.lat != null ? 1 : 0, "map"],
   ["ΑΔΑ", r => r.ada, null,
     r => `https://diavgeia.gov.gr/decision/view/${r.ada}`],
   ["PDF", r => r.pdf_path ? "PDF" : "", null,
@@ -463,11 +476,21 @@ function buildTable(rows, runId) {
     tbody.innerHTML = "";
     for (const r of view) {
       const trow = document.createElement("tr");
-      for (const [, get2, cls, href] of COLS) {
+      for (const [, get2, cls, href, , action] of COLS) {
         const td = document.createElement("td");
         if (cls) td.className = cls;
         const url = href && href(r, runId);
-        if (url) {
+        if (action === "map" && r.lat != null) {
+          const a = document.createElement("a");
+          a.href = "#"; a.textContent = "📍";
+          a.title = "Εμφάνιση στον χάρτη";
+          a.style.textDecoration = "none";
+          a.onclick = e => {
+            e.preventDefault();
+            if (box._showOnMap) box._showOnMap(r);
+          };
+          td.appendChild(a);
+        } else if (url) {
           const a = document.createElement("a");
           a.href = url; a.target = "_blank"; a.textContent = get2(r);
           td.appendChild(a);
