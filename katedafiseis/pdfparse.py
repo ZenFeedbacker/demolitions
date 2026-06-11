@@ -11,6 +11,7 @@ from pathlib import Path
 
 from .areas import normalize
 from .diavgeia import session
+from .egsa87 import egsa87_to_wgs84
 from .greek import greek_title
 
 FIELD_LABELS = {
@@ -96,6 +97,34 @@ def parse_fields(text):
     return fields
 
 
+COORDS_LINE_RE = re.compile(r"^\s*Συντεταγμένες\s\s+(\S.*)$", re.M)
+COORDS_PAIR_RE = re.compile(r"(\d{5,6}(?:\.\d+)?)\s+(\d{7}(?:\.\d+)?)")
+
+
+def extract_polygon(text):
+    """Περίγραμμα κτίσματος από το πεδίο «Συντεταγμένες» (ΕΓΣΑ87).
+
+    Επιστρέφει λίστα [lat, lon] (WGS84) ή None. Οι κορυφές συνεχίζονται
+    σε επόμενες γραμμές με βαθιά εσοχή· σταματάμε στην πρώτη γραμμή που
+    δεν είναι αριθμητική.
+    """
+    m = COORDS_LINE_RE.search(text)
+    if not m:
+        return None
+    chunk = m.group(1)
+    for line in text[m.end():].splitlines()[1:8]:
+        if re.match(r"^\s{8,}[\d.,\s]+$", line) and re.search(r"\d{6,}", line):
+            chunk += " " + line.strip()
+        else:
+            break
+    points = []
+    for xs, ys in COORDS_PAIR_RE.findall(chunk):
+        w = egsa87_to_wgs84(float(xs), float(ys))
+        if w:
+            points.append([round(w[0], 7), round(w[1], 7)])
+    return points or None
+
+
 def detect_floors(description_norm):
     """Μέγιστος αριθμός ορόφων που αναφέρεται στην (κανονικοποιημένη) περιγραφή."""
     floors = [n for pat, n in FLOOR_PATTERNS if re.search(pat, description_norm)]
@@ -122,6 +151,14 @@ def parse_decision(decision, cache_dir):
     if path:
         text = pdf_text(path)
         if text:
+            # το περίγραμμα του κτίσματος (ΕΓΣΑ87) είναι η ακριβέστερη
+            # πηγή θέσης — όταν υπάρχει, δεν χρειάζεται γεωκωδικοποίηση
+            poly = extract_polygon(text)
+            if poly:
+                row["poly"] = poly
+                row["lat"] = round(sum(p[0] for p in poly) / len(poly), 7)
+                row["lon"] = round(sum(p[1] for p in poly) / len(poly), 7)
+                row["precision"] = "κτίσμα (PDF)"
             fields = parse_fields(text)
             # η περιγραφή του PDF μπορεί να κόβεται σε αναδίπλωση γραμμής·
             # προτιμάμε το (πλήρες) subject και κρατάμε το PDF ως fallback

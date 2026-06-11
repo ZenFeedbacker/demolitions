@@ -165,11 +165,13 @@ def enrich_geocode(run_dir, *, cache_dir, log=print, step=None, cancel=None):
             _check(cancel)
             if step:
                 step("geocode", i, len(rows))
-            if row.get("lat") is not None:
-                continue  # ήδη γεωκωδικοποιημένη (συνέχιση μετά από ακύρωση)
-            row["lat"], row["lon"], row["precision"] = \
-                geocoder.geocode_row(row, row["dimos"])
-            if row["precision"] in ("οδός+αριθμός", "οδός", "οικισμός"):
+            if row.get("lat") is None:
+                row["lat"], row["lon"], row["precision"] = \
+                    geocoder.geocode_row(row, row["dimos"])
+            # σημείο μακριά από τον δήμο των μεταδεδομένων = ύποπτο
+            # (λάθος δήλωση δήμου στο e-Άδειες) — και για συντεταγμένες PDF
+            if row.get("lat") is not None and row["precision"] in (
+                    "κτίσμα (PDF)", "οδός+αριθμός", "οδός", "οικισμός"):
                 dist = geocoder.dimos_distance_km(row, row["dimos"])
                 if dist and dist > 60:
                     flag = f"~{dist:.0f}km από τον δήμο"

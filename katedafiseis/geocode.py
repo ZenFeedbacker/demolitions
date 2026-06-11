@@ -102,6 +102,11 @@ class Geocoder:
         # «Δήμος Δράμας» -> «Δράμας» για πιο φυσικά queries
         dimos = row.get("dimos_pdf") or _strip_dimos(dimos_label)
         odos, ar, poli = row.get("odos"), row.get("ar_apo"), row.get("poli")
+        # «Ο.Τ. 53» στο πεδίο οδού = οικοδομικό τετράγωνο, όχι οδός·
+        # δεν υπάρχει στο OSM — πέφτουμε κατευθείαν στον οικισμό
+        if odos and re.search(r"(^|\s)Ο\.?\s*Τ\.?(\s|\d|$)|ΟΙΚΟΔΟΜΙΚ",
+                              normalize(odos)):
+            odos = ""
         polis = _poli_variants(poli, dimos)
 
         tiers = []
