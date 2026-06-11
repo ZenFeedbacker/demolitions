@@ -99,6 +99,7 @@
   .maplegend i { display: inline-block; width: .7rem; height: .7rem;
           border-radius: 50%; margin-right: .3rem; vertical-align: -1px; }
   .leaflet-popup-content { font-size: .82rem; }
+  a.recenter { font-size: 20px; font-weight: 700; }
 </style>
 <script src="/static/leaflet.js"></script>
 <script src="/static/leaflet.markercluster.js"></script>
@@ -368,6 +369,22 @@ function addMapToggle(box, rows, runId) {
         }).addTo(map);
         cluster = L.markerClusterGroup({ maxClusterRadius: 40 });
         map.addLayer(cluster);
+        const Recenter = L.Control.extend({
+          options: { position: "topleft" },
+          onAdd() {
+            const div = L.DomUtil.create("div", "leaflet-bar");
+            const a = L.DomUtil.create("a", "recenter", div);
+            a.href = "#"; a.title = "Επαναφορά στα αποτελέσματα";
+            a.textContent = "⌖";
+            L.DomEvent.on(a, "click", e => {
+              L.DomEvent.preventDefault(e);
+              if (cluster.getLayers().length)
+                map.fitBounds(cluster.getBounds().pad(0.15), { maxZoom: 16 });
+            });
+            return div;
+          },
+        });
+        map.addControl(new Recenter());
         box._onFilter = v => { if (!mapDiv.classList.contains("hidden")) update(v); };
       }
       map.invalidateSize();
