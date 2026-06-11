@@ -17,8 +17,8 @@ from katedafiseis.egsa87 import egsa87_to_wgs84
 from katedafiseis.geocode import _poli_variants, _strip_dimos
 from katedafiseis.greek import dimos_display, greek_title, pretty_area
 from katedafiseis.output import COLUMNS, write_xlsx
-from katedafiseis.pdfparse import (_clean, detect_floors, extract_polygon,
-                                   parse_fields)
+from katedafiseis.pdfparse import (_clean, detect_extent, detect_floors,
+                                   extract_polygon, parse_fields)
 
 
 class TestNormalize(unittest.TestCase):
@@ -120,6 +120,17 @@ class TestDetectFloors(unittest.TestCase):
     def test_cases(self):
         for desc, want in self.CASES:
             self.assertEqual(detect_floors(normalize(desc)), want, desc)
+
+
+class TestDetectExtent(unittest.TestCase):
+    def test_cases(self):
+        for desc, want in [
+            ("ΚΑΤΕΔΑΦΙΣΗ ΔΙΩΡΟΦΗΣ ΚΑΤΟΙΚΙΑΣ", "ολική"),
+            ("ΚΑΤΕΔΑΦΙΣΗ ΤΜΗΜΑΤΟΣ ΚΤΙΡΙΟΥ", "τμηματική/μερική"),
+            ("ΜΕΡΙΚΗ ΚΑΤΕΔΑΦΙΣΗ ΙΣΟΓΕΙΟΥ", "τμηματική/μερική"),
+            ("ΤΜΗΜΑΤΙΚΗ ΚΑΤΕΔΑΦΙΣΗ ΑΠΟΘΗΚΗΣ", "τμηματική/μερική"),
+        ]:
+            self.assertEqual(detect_extent(normalize(desc)), want, desc)
 
 
 class TestParseFields(unittest.TestCase):

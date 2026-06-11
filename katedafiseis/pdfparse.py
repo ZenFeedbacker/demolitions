@@ -125,6 +125,17 @@ def extract_polygon(text):
     return points or None
 
 
+def detect_extent(description_norm):
+    """«ολική» ή «τμηματική/μερική» κατεδάφιση, από την περιγραφή.
+
+    Συναγωγή: όσες αναφέρουν ΤΜΗΜΑ/ΜΕΡΙΚΗ θεωρούνται τμηματικές, οι
+    υπόλοιπες ολικές — η φόρμα δεν έχει ρητό πεδίο.
+    """
+    if re.search(r"ΤΜΗΜΑ|ΜΕΡΙΚ", description_norm):
+        return "τμηματική/μερική"
+    return "ολική"
+
+
 def detect_floors(description_norm):
     """Μέγιστος αριθμός ορόφων που αναφέρεται στην (κανονικοποιημένη) περιγραφή."""
     floors = [n for pat, n in FLOOR_PATTERNS if re.search(pat, description_norm)]
@@ -170,5 +181,7 @@ def parse_decision(decision, cache_dir):
             for k in ("odos", "poli", "dimos_pdf", "dim_enotita"):
                 row[k] = greek_title(fields[k])
             row["parse_ok"] = bool(fields["poli"] or fields["odos"])
-    row["orofoi"] = detect_floors(normalize(row["perigrafi"]))
+    desc_norm = normalize(row["perigrafi"])
+    row["orofoi"] = detect_floors(desc_norm)
+    row["ektasi"] = detect_extent(desc_norm)
     return row
