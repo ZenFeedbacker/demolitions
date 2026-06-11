@@ -13,6 +13,8 @@ from pathlib import Path
 
 import requests
 
+from .areas import normalize
+
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 USER_AGENT = "katedafiseis-research/1.0 (ffeizidis@grnet.gr)"
 # λογικά όρια Ελλάδας για απόρριψη άσχετων αποτελεσμάτων
@@ -26,6 +28,32 @@ session.headers["User-Agent"] = USER_AGENT
 def _strip_dimos(label):
     """«Δήμος Δράμας»/«ΔΗΜΟΣ ΔΡΑΜΑΣ» -> «Δράμας»."""
     return re.sub(r"^(ΔΗΜΟΣ|Δήμος)\s+", "", label).title()
+
+
+def _poli_variants(poli, dimos):
+    """Παραλλαγές του «Πόλη/Οικισμός» για τα queries.
+
+    Το πεδίο συχνά γράφεται περιγραφικά («Οικισμός Ποταμιας Θάσου»,
+    «ΔΡΑΜΑ/ΠΡΟΑΣΤΕΙΟ») και δεν ταιριάζει με το OSM· δοκιμάζουμε πρώτα
+    καθαρισμένες μορφές (χωρίς «Οικισμός», χωρίς το όνομα του δήμου στο
+    τέλος) — το σκέτο όνομα οικισμού είναι ό,τι ξέρει το OSM, ενώ η
+    περιγραφική μορφή πιάνει εύκολα λάθος αποτέλεσμα (π.χ. δρόμο).
+    """
+    out = []
+    for part in [poli] + poli.split("/"):
+        part = part.strip()
+        if not part:
+            continue
+        variants = [part]
+        words = part.split()
+        if words and normalize(words[0]) in ("ΟΙΚΙΣΜΟΣ", "ΣΥΝΟΙΚΙΣΜΟΣ",
+                                             "ΟΙΚ.", "ΠΕΡΙΟΧΗ", "ΘΕΣΗ"):
+            words = words[1:]
+            variants.append(" ".join(words))
+        if len(words) > 1 and normalize(words[-1]) == normalize(dimos):
+            variants.append(" ".join(words[:-1]))
+        out.extend(v for v in reversed(variants) if v and v not in out)
+    return out
 
 
 class Geocoder:
@@ -74,8 +102,7 @@ class Geocoder:
         # «Δήμος Δράμας» -> «Δράμας» για πιο φυσικά queries
         dimos = row.get("dimos_pdf") or _strip_dimos(dimos_label)
         odos, ar, poli = row.get("odos"), row.get("ar_apo"), row.get("poli")
-        # «ΔΡΑΜΑ/ΠΡΟΑΣΤΕΙΟ» -> δοκίμασε και σκέτο «ΔΡΑΜΑ»
-        polis = [p.strip() for p in dict.fromkeys([poli, poli.split("/")[0]]) if p.strip()]
+        polis = _poli_variants(poli, dimos)
 
         tiers = []
         for p in polis:
