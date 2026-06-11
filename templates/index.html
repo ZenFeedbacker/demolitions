@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Κατεδαφίσεις — Διαύγεια</title>
+<link rel="stylesheet" href="/static/leaflet.css">
+<link rel="stylesheet" href="/static/MarkerCluster.css">
+<link rel="stylesheet" href="/static/MarkerCluster.Default.css">
 <style>
   :root { --acc: #b3412c; --bg: #faf8f5; --line: #ddd6cc; }
   * { box-sizing: border-box; }
@@ -78,7 +81,20 @@
           font-size: .75rem; }
   .tag.no { background: #f5e9e0; color: #9a5b2d; }
   a { color: #1d5fa8; }
+  .viewtoggle { display: inline-flex; border: 1px solid var(--line); border-radius: 6px;
+          overflow: hidden; margin-bottom: .6rem; }
+  .viewtoggle button { border: none; background: #fff; padding: .4rem 1rem;
+          cursor: pointer; font-size: .9rem; }
+  .viewtoggle button.on { background: var(--acc); color: #fff; }
+  .mapwrap { height: 65vh; border-radius: 6px; border: 1px solid var(--line); }
+  .maplegend { display: flex; flex-wrap: wrap; gap: 1rem; font-size: .8rem;
+          color: #6b655a; margin-top: .4rem; }
+  .maplegend i { display: inline-block; width: .7rem; height: .7rem;
+          border-radius: 50%; margin-right: .3rem; vertical-align: -1px; }
+  .leaflet-popup-content { font-size: .82rem; }
 </style>
+<script src="/static/leaflet.js"></script>
+<script src="/static/leaflet.markercluster.js"></script>
 </head>
 <body>
 <div class="wrap">
@@ -279,7 +295,82 @@ async function renderResults(container, manifest, geocodingNow) {
       `<span class="tag no">συντεταγμένες σε εξέλιξη…</span>`);
   }
   container.appendChild(h);
-  container.appendChild(buildTable(rows, manifest.run_id));
+  const box = buildTable(rows, manifest.run_id);
+  container.appendChild(box);
+  if (rows.some(r => r.lat != null)) addMapToggle(box, rows, manifest.run_id);
+}
+
+/* ---------- χάρτης ---------- */
+const PREC_COLORS = { "οδός+αριθμός": "#2e6b46", "οδός": "#1d5fa8",
+                      "οικισμός": "#c87f1b", "δήμος": "#8a8273" };
+const esc = s => String(s ?? "").replace(/[&<>"]/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function addMapToggle(box, rows, runId) {
+  const toggle = document.createElement("div");
+  toggle.className = "viewtoggle";
+  toggle.innerHTML = `<button class="on">Πίνακας</button><button>Χάρτης</button>`;
+  const [btnTable, btnMap] = toggle.children;
+  box.insertBefore(toggle, box.querySelector(".tablewrap"));
+
+  const mapDiv = document.createElement("div");
+  mapDiv.className = "mapwrap hidden";
+  const legend = document.createElement("div");
+  legend.className = "maplegend hidden";
+  legend.innerHTML = "Ακρίβεια: " + Object.entries(PREC_COLORS).map(
+    ([k, c]) => `<span><i style="background:${c}"></i>${k}</span>`).join("");
+  box.insertBefore(mapDiv, box.querySelector(".tablewrap"));
+  box.insertBefore(legend, box.querySelector(".tablewrap"));
+
+  let map = null, cluster = null;
+  function update(view) {
+    cluster.clearLayers();
+    const pts = view.filter(r => r.lat != null);
+    for (const r of pts) {
+      const m = L.circleMarker([r.lat, r.lon], {
+        radius: 7, weight: 1.5, color: "#fff", fillOpacity: .85,
+        fillColor: PREC_COLORS[r.precision] || "#8a8273",
+      });
+      const addr = [r.odos, r.ar_apo].filter(Boolean).join(" ");
+      m.bindPopup(
+        `<b>${esc(dmy(r.date))}</b> — ${esc([addr, r.poli].filter(Boolean).join(", "))}<br>` +
+        `${esc(r.dimos)}${r.orofoi ? ` · ${esc(r.orofoi)} όροφοι` : ""}<br>` +
+        `${esc(r.perigrafi)}<br>` +
+        `<a href="https://diavgeia.gov.gr/decision/view/${esc(r.ada)}" target="_blank">${esc(r.ada)}</a>` +
+        (r.pdf_path ? ` · <a href="/runs/${esc(runId)}/${esc(r.pdf_path)}" target="_blank">PDF</a>` : "") +
+        ` · <span style="color:${PREC_COLORS[r.precision] || "#8a8273"}">${esc(r.precision)}</span>`);
+      cluster.addLayer(m);
+    }
+    if (pts.length) map.fitBounds(cluster.getBounds().pad(0.15), { maxZoom: 16 });
+    const missing = view.length - pts.length;
+    box.querySelector("#tnote").textContent = missing
+      ? `${pts.length} σημεία στον χάρτη — ${missing} άδειες χωρίς συντεταγμένες δεν εμφανίζονται.`
+      : `${pts.length} σημεία στον χάρτη`;
+  }
+  function show(mapMode) {
+    btnTable.classList.toggle("on", !mapMode);
+    btnMap.classList.toggle("on", mapMode);
+    box.querySelector(".tablewrap").classList.toggle("hidden", mapMode);
+    mapDiv.classList.toggle("hidden", !mapMode);
+    legend.classList.toggle("hidden", !mapMode);
+    if (mapMode) {
+      if (!map) {
+        map = L.map(mapDiv).setView([38.3, 24.0], 6);
+        L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          maxZoom: 19, attribution: "© OpenStreetMap contributors",
+        }).addTo(map);
+        cluster = L.markerClusterGroup({ maxClusterRadius: 40 });
+        map.addLayer(cluster);
+        box._onFilter = v => { if (!mapDiv.classList.contains("hidden")) update(v); };
+      }
+      map.invalidateSize();
+      update(box._filtered);
+    } else {
+      box.querySelector("#ftext").dispatchEvent(new Event("input"));  // ξανά η σημείωση πίνακα
+    }
+  }
+  btnTable.onclick = () => show(false);
+  btnMap.onclick = () => show(true);
 }
 
 // [επικεφαλίδα, τιμή, css class, σύνδεσμος, τιμή ταξινόμησης]
@@ -340,6 +431,8 @@ function buildTable(rows, runId) {
       const x = get(a), y = get(b);
       return (x === y ? 0 : x > y ? 1 : -1) * sortDir;
     });
+    box._filtered = view;
+    if (box._onFilter) box._onFilter(view);
     const total = view.length;
     view = view.slice(0, MAXROWS);
     const tbody = box.querySelector("tbody");
