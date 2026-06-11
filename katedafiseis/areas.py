@@ -5,7 +5,9 @@
 """
 
 import json
+import re
 import unicodedata
+from collections import Counter
 from pathlib import Path
 
 import requests
@@ -120,6 +122,18 @@ def resolve_area(area, cache_dir):
             bare = bare[len("ΔΗΜΟΣ "):]
         muni_hits = [u for u, l in munis.items()
                      if normalize(l) in ("ΔΗΜΟΣ " + bare, bare)]
+        # «Ηρακλείου (Κρήτης)»: προσδιορισμός σε παρένθεση για τα
+        # ομώνυμα ζεύγη — δεκτό όνομα περιφέρειας ή ΠΕ
+        m = re.match(r"^(.*?)\s*\(([^)]+)\)$", bare)
+        if not muni_hits and m:
+            base, qual = m.group(1), normalize(m.group(2))
+            def _q(u):
+                pe = normalize(PREFIX_PE.get(u[:2], ""))
+                region = normalize(regions.get(muni_region[u], "")
+                                   ).removeprefix("ΠΕΡΙΦΕΡΕΙΑ ").strip()
+                return qual in (pe, region)
+            muni_hits = [u for u, l in munis.items()
+                         if normalize(l) in ("ΔΗΜΟΣ " + base, base) and _q(u)]
         if len(muni_hits) == 1:
             selected[muni_hits[0]] = munis[muni_hits[0]]
             labels.append(munis[muni_hits[0]])
@@ -169,7 +183,7 @@ def list_areas(cache_dir):
     """
     from .greek import dimos_display, greek_title  # εδώ λόγω κυκλικού import
 
-    regions, munis, _ = load_kallikratis(cache_dir)
+    regions, munis, muni_region = load_kallikratis(cache_dir)
     multi_pe = {p for prefixes in NOMOS_PREFIXES.values() for p in prefixes}
     areas = [{"label": "Ελλάδα", "type": "χώρα"}]
     areas += [{"label": greek_title(label), "type": "περιφέρεια"}
@@ -181,8 +195,14 @@ def list_areas(cache_dir):
         # ταυτόσημες με τον παλιό νομό
         kind = "ΠΕ " if prefix in multi_pe else "Νομός "
         areas.append({"label": greek_title(kind + name), "type": "νομός/ΠΕ"})
-    areas += [{"label": dimos_display(label), "type": "δήμος"}
-              for label in sorted(munis.values())]
+    # ομώνυμοι δήμοι (Ηρακλείου Κρήτης/Αττικής) ξεχωρίζουν με την περιφέρεια
+    dups = {l for l, n in Counter(munis.values()).items() if n > 1}
+    for code, label in sorted(munis.items(), key=lambda kv: kv[1]):
+        disp = dimos_display(label)
+        if label in dups:
+            region = regions[muni_region[code]].removeprefix("ΠΕΡΙΦΕΡΕΙΑ ")
+            disp += f" ({greek_title(region)})"
+        areas.append({"label": disp, "type": "δήμος"})
     for a in areas:
         a["norm"] = normalize(a["label"])
     return areas

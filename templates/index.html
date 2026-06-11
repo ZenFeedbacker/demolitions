@@ -260,15 +260,15 @@ async function poll() {
   if (!active) {
     clearInterval(polling); polling = null;
     $("go").disabled = false;
-    $("progress").classList.toggle("hidden", s.state !== "error" && s.state !== "cancelled");
     if (s.state === "error") {
-      $("phaselabel").textContent = "";
       $("formerr").textContent = s.error || "Σφάλμα";
       $("formerr").classList.remove("hidden");
       $("progress").classList.add("hidden");
     } else if (s.state === "cancelled") {
-      $("phaselabel").textContent = "Ακυρώθηκε.";
+      $("phaselabel").textContent = "Ακυρώθηκε.";   // το progress μένει ορατό
       $("bar").classList.remove("indet");
+    } else {
+      $("progress").classList.add("hidden");
     }
   }
 }
@@ -309,8 +309,9 @@ async function renderResults(container, manifest, geocodingNow) {
 }
 
 /* ---------- χάρτης ---------- */
-const PREC_COLORS = { "οδός+αριθμός": "#2e6b46", "οδός": "#1d5fa8",
-                      "οικισμός": "#c87f1b", "δήμος": "#8a8273" };
+const PREC_COLORS = { "κτίσμα (PDF)": "#7b2d8b", "οδός+αριθμός": "#2e6b46",
+                      "οδός": "#1d5fa8", "οικισμός": "#c87f1b",
+                      "δήμος": "#8a8273" };
 const esc = s => String(s ?? "").replace(/[&<>"]/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
@@ -350,6 +351,15 @@ function addMapToggle(box, rows, runId) {
         (r.pdf_path ? ` · <a href="/runs/${esc(runId)}/${esc(r.pdf_path)}" target="_blank">PDF</a>` : "") +
         ` · <a href="https://www.openstreetmap.org/?mlat=${r.lat}&mlon=${r.lon}#map=18/${r.lat}/${r.lon}" target="_blank">OSM</a>` +
         ` · <span style="color:${PREC_COLORS[r.precision] || "#8a8273"}">${esc(r.precision)}</span>`);
+      if (r.poly && r.poly.length >= 3) {   // περίγραμμα κτίσματος από το PDF
+        m.on("popupopen", () => {
+          m._pg = L.polygon(r.poly, { color: "#7b2d8b", weight: 2,
+                                      fillOpacity: .25 }).addTo(map);
+        });
+        m.on("popupclose", () => {
+          if (m._pg) { map.removeLayer(m._pg); m._pg = null; }
+        });
+      }
       cluster.addLayer(m);
       markerByRow.set(r, m);
     }
@@ -357,7 +367,7 @@ function addMapToggle(box, rows, runId) {
       map.fitBounds(cluster.getBounds().pad(0.15), { maxZoom: 16 });
     }
     const missing = view.length - pts.length;
-    box.querySelector("#tnote").textContent = missing
+    box.querySelector(".tnote").textContent = missing
       ? `${pts.length} σημεία στον χάρτη — ${missing} άδειες χωρίς συντεταγμένες δεν εμφανίζονται.`
       : `${pts.length} σημεία στον χάρτη`;
   }
@@ -396,7 +406,7 @@ function addMapToggle(box, rows, runId) {
       map.invalidateSize();
       update(box._filtered);
     } else {
-      box.querySelector("#ftext").dispatchEvent(new Event("input"));  // ξανά η σημείωση πίνακα
+      box.querySelector(".ftext").dispatchEvent(new Event("input"));  // ξανά η σημείωση πίνακα
     }
   }
   btnTable.onclick = () => show(false);
@@ -432,17 +442,17 @@ function buildTable(rows, runId) {
   const dimoi = [...new Set(rows.map(r => r.dimos))].sort();
   const orofoi = [...new Set(rows.map(r => r.orofoi).filter(x => x != null))].sort((a, b) => a - b);
   box.innerHTML = `<div class="filters">
-      <input id="ftext" placeholder="Φίλτρο κειμένου (οδός, περιγραφή…)">
-      <select id="fdimos"><option value="">Όλοι οι δήμοι</option></select>
-      <select id="forofoi"><option value="">Όλοι οι όροφοι</option></select>
-      <select id="fdup"><option value="">Όλες οι εγγραφές</option>
+      <input class="ftext" placeholder="Φίλτρο κειμένου (οδός, περιγραφή…)">
+      <select class="fdimos"><option value="">Όλοι οι δήμοι</option></select>
+      <select class="forofoi"><option value="">Όλοι οι όροφοι</option></select>
+      <select class="fdup"><option value="">Όλες οι εγγραφές</option>
         <option value="clean">Χωρίς πιθανά διπλά</option></select>
     </div>
     <div class="tablewrap"><table><thead><tr></tr></thead><tbody></tbody></table></div>
-    <div class="note" id="tnote"></div>`;
-  const fd = box.querySelector("#fdimos");
+    <div class="note tnote"></div>`;
+  const fd = box.querySelector(".fdimos");
   for (const d of dimoi) fd.add(new Option(d, d));
-  const fo = box.querySelector("#forofoi");
+  const fo = box.querySelector(".forofoi");
   for (const o of orofoi) fo.add(new Option(o, o));
   if (dimoi.length < 2) fd.classList.add("hidden");
 
@@ -456,8 +466,8 @@ function buildTable(rows, runId) {
   });
 
   function redraw() {
-    const q = norm(box.querySelector("#ftext").value);
-    const dim = fd.value, oro = fo.value, dup = box.querySelector("#fdup").value;
+    const q = norm(box.querySelector(".ftext").value);
+    const dim = fd.value, oro = fo.value, dup = box.querySelector(".fdup").value;
     let view = rows.filter(r =>
       (!dim || r.dimos === dim) &&
       (!oro || String(r.orofoi) === oro) &&
@@ -501,7 +511,7 @@ function buildTable(rows, runId) {
       }
       tbody.appendChild(trow);
     }
-    box.querySelector("#tnote").textContent = total > MAXROWS
+    box.querySelector(".tnote").textContent = total > MAXROWS
       ? `Εμφανίζονται οι πρώτες ${MAXROWS} από ${total} εγγραφές — περιορίστε με τα φίλτρα.`
       : `${total} εγγραφές`;
   }

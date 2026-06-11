@@ -130,6 +130,14 @@ def _start(target, *args, state="running", result=None, run_id=None, meta=None):
         return True
 
 
+def _safe_run_dir(run_id):
+    run_dir = (RUNS_DIR / run_id).resolve()
+    if not (run_dir.is_relative_to(RUNS_DIR.resolve())
+            and (run_dir / "run.json").exists()):
+        abort(404)
+    return run_dir
+
+
 @app.get("/")
 def index():
     return render_template("index.html", today=date.today().isoformat())
@@ -242,14 +250,6 @@ def serve_run_file(run_id, filename):
 def serve_zip(run_id):
     _safe_run_dir(run_id)
     return send_from_directory(RUNS_DIR, f"{run_id}.zip")
-
-
-def _safe_run_dir(run_id):
-    run_dir = (RUNS_DIR / run_id).resolve()
-    if not (run_dir.is_relative_to(RUNS_DIR.resolve())
-            and (run_dir / "run.json").exists()):
-        abort(404)
-    return run_dir
 
 
 def main():
