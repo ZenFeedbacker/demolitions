@@ -98,8 +98,8 @@ def search_permits(from_date, to_date, muni_codes, cache_dir, progress=print):
                 seen[d["ada"]] = d
                 kept += 1
         progress(
-            f"  {win_start} – {win_end}: {len(decisions)} πράξεις στη χώρα, "
-            f"{kept} άδειες κατεδάφισης στην περιοχή"
+            f"  {win_start:%d/%m/%Y} – {win_end:%d/%m/%Y}: {len(decisions)} "
+            f"πράξεις στη χώρα, {kept} άδειες κατεδάφισης στην περιοχή"
         )
     return sorted(seen.values(), key=lambda d: d["issueDate"])
 

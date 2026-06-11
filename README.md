@@ -7,14 +7,28 @@
 ΤΕΕ μέσω του e-Άδειες, κατεβάζει το PDF κάθε άδειας, εξάγει τα στοιχεία
 διεύθυνσης, γεωκωδικοποιεί με Nominatim/OpenStreetMap και παράγει spreadsheet.
 
-## Χρήση
+## Εγκατάσταση
+
+Χρειάζονται **Python 3** και το **pdftotext** (πακέτο poppler). Σε
+Debian/Ubuntu/Mint όλα μπαίνουν με μία εντολή:
 
 ```sh
-pip install -r requirements.txt          # requests, openpyxl, flask
-sudo apt install poppler-utils           # pdftotext
+sudo apt install python3-requests python3-openpyxl python3-flask poppler-utils
 ```
 
-### Web UI (για μη ειδικούς)
+Εναλλακτικά (macOS, ή όποιος προτιμά pip) με virtualenv — στα σύγχρονα
+Linux το σκέτο `pip install` εκτός venv δεν επιτρέπεται:
+
+```sh
+brew install poppler                     # macOS· σε Linux: sudo apt install poppler-utils
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt    # requests, openpyxl, flask
+```
+
+(Με venv, στις παρακάτω εντολές αντικαταστήστε το `python3` με
+`.venv/bin/python3`.)
+
+## Εκτέλεση — Web UI (για μη ειδικούς)
 
 ```sh
 python3 webui.py
@@ -28,14 +42,19 @@ autocomplete, διάστημα ημερομηνιών, ζωντανή πρόοδ
 αργότερα με το κουμπί «Προσθήκη συντεταγμένων»). Η καρτέλα «Ιστορικό»
 δείχνει όλα τα παλιότερα runs (αποθηκεύονται στο `runs/`).
 
-### Γραμμή εντολών
+Τερματισμός: Ctrl-C στο τερματικό. Η σελίδα τρέχει μόνο τοπικά
+(127.0.0.1) — δεν είναι προσβάσιμη από το δίκτυο.
+
+## Εκτέλεση — γραμμή εντολών
 
 ```sh
-python3 katedafiseis.py --area "Δήμος Δράμας" --from 2021-01-01 --to 2021-12-31 -o drama
-python3 katedafiseis.py --area "Νομός Καβάλας" --from 2019-01-01 -o kavala
-python3 katedafiseis.py --area "Περιφέρεια Κρήτης" --from 2024-01-01 -o kriti
-python3 katedafiseis.py --area "Ελλάδα" --from 2023-01-01 --to 2023-12-31 --no-geocode -o ellada2023
+python3 katedafiseis.py --area "Δήμος Δράμας" --from 01/01/2021 --to 31/12/2021 -o drama
+python3 katedafiseis.py --area "Νομός Καβάλας" --from 01/01/2019 -o kavala
+python3 katedafiseis.py --area "Περιφέρεια Κρήτης" --from 01/01/2024 -o kriti
+python3 katedafiseis.py --area "Ελλάδα" --from 01/01/2023 --to 31/12/2023 --no-geocode -o ellada2023
 ```
+
+Ημερομηνίες σε μορφή ΗΗ/ΜΜ/ΕΕΕΕ (δεκτή και η ΕΕΕΕ-ΜΜ-ΗΗ).
 
 Κάθε run παράγει έναν φάκελο:
 

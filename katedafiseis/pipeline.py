@@ -58,12 +58,12 @@ def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
     """Αναζήτηση + PDF + xlsx (χωρίς συντεταγμένες). Επιστρέφει RunResult."""
     if from_date < E_ADEIES_START:
         log(f"Προσοχή: το e-Άδειες ξεκίνησε τον 10/2018· πριν από "
-            f"{E_ADEIES_START} δεν υπάρχουν ομοιόμορφα δεδομένα.")
+            f"{E_ADEIES_START:%d/%m/%Y} δεν υπάρχουν ομοιόμορφα δεδομένα.")
         from_date = E_ADEIES_START
 
     area_label, munis = resolve_area(area, cache_dir)
     log(f"Περιοχή: {area_label} ({len(munis)} δήμοι)")
-    log(f"Διάστημα: {from_date} – {to_date}")
+    log(f"Διάστημα: {from_date:%d/%m/%Y} – {to_date:%d/%m/%Y}")
 
     def search_progress(msg):
         _check(cancel)

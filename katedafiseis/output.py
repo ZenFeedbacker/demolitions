@@ -1,6 +1,7 @@
 """Εξαγωγή σε xlsx: ένα φύλλο με τις κατεδαφίσεις, ένα pivot ανά έτος/δήμο."""
 
 from collections import Counter
+from datetime import date
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
@@ -44,6 +45,8 @@ def write_xlsx(rows, out_path):
             value = row.get(key)
             if key == "parse_ok":
                 value = "ΝΑΙ" if value else "ΟΧΙ"
+            elif key == "date":
+                value = date.fromisoformat(value)
             if key == "pdf_path":
                 cell = ws.cell(row=r, column=col,
                                value="PDF" if value else "")
@@ -52,6 +55,8 @@ def write_xlsx(rows, out_path):
                     cell.font = Font(color="0563C1", underline="single")
                 continue
             cell = ws.cell(row=r, column=col, value=value)
+            if key == "date":
+                cell.number_format = "DD/MM/YYYY"
             if key == "ada":
                 cell.hyperlink = row["url"]
                 cell.font = Font(color="0563C1", underline="single")

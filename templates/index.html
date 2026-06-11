@@ -126,6 +126,7 @@
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
+const dmy = iso => (iso || "").split("-").reverse().join("/");
 const PHASES = { search: "Αναζήτηση στη Διαύγεια…", pdf: "Κατέβασμα και ανάλυση PDF",
                  geocode: "Γεωκωδικοποίηση (εμπλουτισμός — τα αρχεία είναι ήδη διαθέσιμα)" };
 const MAXROWS = 500;
@@ -256,7 +257,7 @@ async function renderResults(container, manifest, geocodingNow) {
   const dupNote = manifest.n_dups
     ? ` — ${manifest.n_dups} πιθανά διπλά (στήλη «Έλεγχος»)` : "";
   h.innerHTML = `<h2 style="margin:.2rem 0"></h2>
-    <div class="note">${manifest.from} έως ${manifest.to} ·
+    <div class="note">${dmy(manifest.from)} έως ${dmy(manifest.to)} ·
       <b>${manifest.n_rows}</b> άδειες${dupNote}</div>
     <div class="dl">
       <a class="btn" href="${manifest.xlsx_url}">Λήψη Excel</a>
@@ -281,8 +282,9 @@ async function renderResults(container, manifest, geocodingNow) {
   container.appendChild(buildTable(rows, manifest.run_id));
 }
 
+// [επικεφαλίδα, τιμή, css class, σύνδεσμος, τιμή ταξινόμησης]
 const COLS = [
-  ["Ημ/νία", r => r.date],
+  ["Ημ/νία", r => dmy(r.date), null, null, r => r.date],
   ["Δήμος", r => r.dimos],
   ["Πόλη/Οικισμός", r => r.poli],
   ["Οδός", r => (r.odos + " " + (r.ar_apo || "")).trim()],
@@ -332,7 +334,7 @@ function buildTable(rows, runId) {
       (!oro || String(r.orofoi) === oro) &&
       (!dup || !(r.flags || "").includes("πιθανό διπλό")) &&
       (!q || norm([r.odos, r.poli, r.perigrafi, r.dim_enotita, r.ada].join(" ")).includes(q)));
-    const get = COLS[sortKey][1];
+    const get = COLS[sortKey][4] || COLS[sortKey][1];
     view.sort((a, b) => {
       const x = get(a), y = get(b);
       return (x === y ? 0 : x > y ? 1 : -1) * sortDir;
@@ -377,10 +379,10 @@ async function loadHistory() {
   for (const m of runs) {
     const d = document.createElement("div");
     d.className = "runcard";
-    d.innerHTML = `<b></b><span>${m.from} – ${m.to}</span>
+    d.innerHTML = `<b></b><span>${dmy(m.from)} – ${dmy(m.to)}</span>
       <span>${m.n_rows} άδειες</span>
       <span class="tag ${m.geocoded ? "" : "no"}">${m.geocoded ? "με συντεταγμένες" : "χωρίς συντεταγμένες"}</span>
-      <span>${m.created}</span>`;
+      <span>${dmy(m.created)}</span>`;
     d.querySelector("b").textContent = m.area;
     d.onclick = async () => {
       list.classList.add("hidden");

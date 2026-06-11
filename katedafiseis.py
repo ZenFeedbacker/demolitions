@@ -7,12 +7,22 @@
 
 import argparse
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from katedafiseis.areas import AreaError
 from katedafiseis.pipeline import (E_ADEIES_START, NoPermitsFound,
                                    enrich_geocode, run_pipeline)
+
+
+def parse_date(s):
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            pass
+    raise argparse.ArgumentTypeError(
+        f"μη έγκυρη ημερομηνία «{s}» (δεκτά: ΗΗ/ΜΜ/ΕΕΕΕ ή ΕΕΕΕ-ΜΜ-ΗΗ)")
 
 
 def parse_args():
@@ -23,10 +33,10 @@ def parse_args():
                "ή πολλές χωρισμένες με κόμμα.",
     )
     p.add_argument("--area", required=True, help="περιοχή ενδιαφέροντος")
-    p.add_argument("--from", dest="from_date", type=date.fromisoformat,
+    p.add_argument("--from", dest="from_date", type=parse_date,
                    default=E_ADEIES_START,
-                   help="από ημερομηνία (YYYY-MM-DD, default 2018-10-01)")
-    p.add_argument("--to", dest="to_date", type=date.fromisoformat,
+                   help="από ημερομηνία (ΗΗ/ΜΜ/ΕΕΕΕ, default 01/10/2018)")
+    p.add_argument("--to", dest="to_date", type=parse_date,
                    default=date.today(), help="έως ημερομηνία (default σήμερα)")
     p.add_argument("-o", "--output", default="katedafiseis",
                    help="φάκελος εξόδου του run (θα περιέχει το .xlsx και pdf/)")
