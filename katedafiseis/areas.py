@@ -14,6 +14,10 @@ DICTIONARY_URL = (
     "https://diavgeia.gov.gr/opendata/dictionaries/ADMIN_STRUCTURE_KALLIKRATIS.json"
 )
 
+
+class AreaError(Exception):
+    """Άγνωστη ή διφορούμενη περιοχή."""
+
 # 2ψήφιο πρόθεμα κωδικού -> περιφερειακή ενότητα
 PREFIX_PE = {
     "01": "ΡΟΔΟΠΗΣ", "02": "ΔΡΑΜΑΣ", "03": "ΕΒΡΟΥ", "04": "ΘΑΣΟΥ",
@@ -121,8 +125,8 @@ def resolve_area(area, cache_dir):
             labels.append(munis[muni_hits[0]])
             continue
         if len(muni_hits) > 1:
-            raise SystemExit(f"Διφορούμενη περιοχή «{part.strip()}»: "
-                             + ", ".join(munis[u] for u in muni_hits))
+            raise AreaError(f"Διφορούμενη περιοχή «{part.strip()}»: "
+                            + ", ".join(munis[u] for u in muni_hits))
 
         # Νομός / περιφερειακή ενότητα
         bare = token
@@ -147,11 +151,36 @@ def resolve_area(area, cache_dir):
             labels.append(("ΠΕ " if narrow else "Νομός ") + bare.title())
             continue
 
-        raise SystemExit(
+        raise AreaError(
             f"Άγνωστη περιοχή «{part.strip()}». Δεκτά: όνομα δήμου, νομού/ΠΕ, "
             f"περιφέρειας, ή «Ελλάδα»."
         )
 
     if not selected:
-        raise SystemExit("Δεν δόθηκε περιοχή.")
+        raise AreaError("Δεν δόθηκε περιοχή.")
     return ", ".join(labels), selected
+
+
+def list_areas(cache_dir):
+    """Όλες οι επιλέξιμες περιοχές για autocomplete.
+
+    Κάθε εγγραφή: {label, norm, type}· το label περνά αυτούσιο στο
+    resolve_area, το norm είναι για φιλτράρισμα χωρίς τόνους/πεζά.
+    """
+    regions, munis, _ = load_kallikratis(cache_dir)
+    multi_pe = {p for prefixes in NOMOS_PREFIXES.values() for p in prefixes}
+    areas = [{"label": "Ελλάδα", "type": "χώρα"}]
+    areas += [{"label": label, "type": "περιφέρεια"}
+              for label in sorted(regions.values())]
+    areas += [{"label": "Νομός " + name.title(), "type": "νομός"}
+              for name in sorted(NOMOS_PREFIXES)]
+    for prefix, name in sorted(PREFIX_PE.items(), key=lambda kv: kv[1]):
+        # ΠΕ μέσα σε πολυ-ΠΕ νομό κρατούν το «ΠΕ»· οι υπόλοιπες είναι
+        # ταυτόσημες με τον παλιό νομό
+        kind = "ΠΕ " if prefix in multi_pe else "Νομός "
+        areas.append({"label": kind + name.title(), "type": "νομός/ΠΕ"})
+    areas += [{"label": label, "type": "δήμος"}
+              for label in sorted(munis.values())]
+    for a in areas:
+        a["norm"] = normalize(a["label"])
+    return areas

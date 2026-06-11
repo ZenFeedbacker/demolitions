@@ -10,9 +10,27 @@
 ## Χρήση
 
 ```sh
-pip install -r requirements.txt          # requests, openpyxl
+pip install -r requirements.txt          # requests, openpyxl, flask
 sudo apt install poppler-utils           # pdftotext
+```
 
+### Web UI (για μη ειδικούς)
+
+```sh
+python3 webui.py
+```
+
+Ανοίγει μόνο του τον browser σε μια απλή σελίδα: επιλογή περιοχής με
+autocomplete, διάστημα ημερομηνιών, ζωντανή πρόοδος, και στο τέλος κουμπιά
+λήψης (Excel, zip με όλα τα PDF) και διαδραστικός πίνακας με ταξινόμηση
+και φίλτρα. Το spreadsheet βγαίνει **αμέσως**· οι συντεταγμένες
+προστίθενται μετά ως εμπλουτισμός (μπορεί να ακυρωθεί και να συνεχιστεί
+αργότερα με το κουμπί «Προσθήκη συντεταγμένων»). Η καρτέλα «Ιστορικό»
+δείχνει όλα τα παλιότερα runs (αποθηκεύονται στο `runs/`).
+
+### Γραμμή εντολών
+
+```sh
 python3 katedafiseis.py --area "Δήμος Δράμας" --from 2021-01-01 --to 2021-12-31 -o drama
 python3 katedafiseis.py --area "Νομός Καβάλας" --from 2019-01-01 -o kavala
 python3 katedafiseis.py --area "Περιφέρεια Κρήτης" --from 2024-01-01 -o kriti

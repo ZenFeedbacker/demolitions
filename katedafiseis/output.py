@@ -44,8 +44,6 @@ def write_xlsx(rows, out_path):
             value = row.get(key)
             if key == "parse_ok":
                 value = "ΝΑΙ" if value else "ΟΧΙ"
-            elif key == "date":
-                value = value.isoformat()
             if key == "pdf_path":
                 cell = ws.cell(row=r, column=col,
                                value="PDF" if value else "")

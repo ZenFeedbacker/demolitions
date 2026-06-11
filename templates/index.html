@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Κατεδαφίσεις — Διαύγεια</title>
+<style>
+  :root { --acc: #b3412c; --bg: #faf8f5; --line: #ddd6cc; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; margin: 0; background: var(--bg);
+         color: #2a2620; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 1.2rem; }
+  h1 { font-size: 1.4rem; margin: .2rem 0 .1rem; }
+  .sub { color: #6b655a; font-size: .9rem; margin-bottom: 1rem; }
+  .tabs { display: flex; gap: .4rem; border-bottom: 2px solid var(--line);
+          margin-bottom: 1rem; }
+  .tabs button { border: none; background: none; padding: .5rem .9rem;
+          font-size: 1rem; cursor: pointer; border-bottom: 3px solid transparent;
+          margin-bottom: -2px; color: #6b655a; }
+  .tabs button.on { color: var(--acc); border-bottom-color: var(--acc);
+          font-weight: 600; }
+  form { display: flex; flex-wrap: wrap; gap: .8rem; align-items: flex-end; }
+  label { display: flex; flex-direction: column; gap: .25rem; font-size: .85rem;
+          color: #6b655a; }
+  input { padding: .5rem .6rem; border: 1px solid var(--line); border-radius: 6px;
+          font-size: 1rem; background: #fff; }
+  #area { width: 24rem; max-width: 80vw; }
+  button.go { background: var(--acc); color: #fff; border: none; padding: .6rem 1.4rem;
+          border-radius: 6px; font-size: 1rem; cursor: pointer; }
+  button.go:disabled { opacity: .5; cursor: default; }
+  .ac { position: relative; }
+  .ac-list { position: absolute; top: 100%; left: 0; right: 0; z-index: 10;
+          background: #fff; border: 1px solid var(--line); border-radius: 0 0 8px 8px;
+          max-height: 18rem; overflow-y: auto; box-shadow: 0 6px 16px rgba(0,0,0,.12); }
+  .ac-list div { padding: .4rem .6rem; cursor: pointer; display: flex;
+          justify-content: space-between; gap: 1rem; }
+  .ac-list div:hover, .ac-list div.sel { background: #f3e9e0; }
+  .ac-list .t { color: #998f80; font-size: .8rem; white-space: nowrap; }
+  .err { color: #a8231f; margin-top: .7rem; }
+  .hidden { display: none !important; }
+  #progress { margin-top: 1.4rem; }
+  .phase { font-weight: 600; margin-bottom: .4rem; }
+  .bar { height: 10px; background: #eee5d8; border-radius: 5px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--acc); width: 0;
+          transition: width .4s; }
+  .bar.indet i { width: 30%; animation: slide 1.2s infinite linear; }
+  @keyframes slide { from { margin-left: -30%; } to { margin-left: 100%; } }
+  pre#log { background: #2a2620; color: #e8e2d6; padding: .8rem; border-radius: 8px;
+          max-height: 14rem; overflow-y: auto; font-size: .8rem; margin-top: .8rem; }
+  button.minor { background: none; border: 1px solid var(--line); padding: .45rem .9rem;
+          border-radius: 6px; cursor: pointer; font-size: .9rem; margin-top: .6rem; }
+  #results { margin-top: 1.6rem; }
+  .dl { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center;
+          margin: .6rem 0 1rem; }
+  .dl a.btn { background: #2e6b46; color: #fff; text-decoration: none;
+          padding: .55rem 1.1rem; border-radius: 6px; }
+  .dl a.btn.alt { background: #5a5346; }
+  .dl button { background: #fff; }
+  .filters { display: flex; flex-wrap: wrap; gap: .6rem; margin-bottom: .6rem; }
+  .filters input, .filters select { padding: .4rem .5rem; border: 1px solid var(--line);
+          border-radius: 6px; background: #fff; font-size: .9rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .82rem; background: #fff; }
+  th, td { border: 1px solid var(--line); padding: .3rem .45rem; text-align: left;
+          vertical-align: top; }
+  th { background: #efe8dc; cursor: pointer; user-select: none; white-space: nowrap;
+          position: sticky; top: 0; }
+  td.desc { max-width: 26rem; }
+  .tablewrap { max-height: 65vh; overflow: auto; border-radius: 6px; }
+  .note { color: #6b655a; font-size: .85rem; margin: .5rem 0; }
+  .runlist { display: flex; flex-direction: column; gap: .5rem; }
+  .runcard { background: #fff; border: 1px solid var(--line); border-radius: 8px;
+          padding: .7rem 1rem; cursor: pointer; display: flex; flex-wrap: wrap;
+          gap: .3rem 1.4rem; align-items: baseline; }
+  .runcard:hover { border-color: var(--acc); }
+  .runcard b { font-size: 1rem; }
+  .runcard span { color: #6b655a; font-size: .85rem; }
+  .tag { background: #e7f0e9; color: #2e6b46; border-radius: 4px; padding: .05rem .4rem;
+          font-size: .75rem; }
+  .tag.no { background: #f5e9e0; color: #9a5b2d; }
+  a { color: #1d5fa8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Κατεδαφίσεις</h1>
+  <div class="sub">Άδειες κατεδάφισης από τη Διαύγεια (e-Άδειες/ΤΕΕ) — spreadsheet, PDF και συντεταγμένες</div>
+
+  <div class="tabs">
+    <button id="tab-search" class="on" onclick="showTab('search')">Νέα αναζήτηση</button>
+    <button id="tab-history" onclick="showTab('history')">Ιστορικό</button>
+  </div>
+
+  <section id="panel-search">
+    <form id="form" autocomplete="off">
+      <label>Περιοχή
+        <span class="ac">
+          <input id="area" placeholder="π.χ. Δήμος Δράμας, Νομός Καβάλας, Περιφέρεια Κρήτης" required>
+          <div id="aclist" class="ac-list hidden"></div>
+        </span>
+      </label>
+      <label>Από <input type="date" id="from" value="2018-10-01" min="2018-10-01" required></label>
+      <label>Έως <input type="date" id="to" value="{{ today }}" required></label>
+      <button class="go" id="go" type="submit">Εκκίνηση</button>
+    </form>
+    <div id="formerr" class="err hidden"></div>
+
+    <div id="progress" class="hidden">
+      <div class="phase" id="phaselabel"></div>
+      <div class="bar" id="bar"><i id="barfill"></i></div>
+      <button class="minor" id="cancel">Ακύρωση</button>
+      <pre id="log"></pre>
+    </div>
+
+    <div id="results" class="hidden"></div>
+  </section>
+
+  <section id="panel-history" class="hidden">
+    <div id="histlist" class="runlist"></div>
+    <div id="histview" class="hidden">
+      <button class="minor" onclick="backToList()">← Ιστορικό</button>
+      <div id="histresults"></div>
+    </div>
+  </section>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const PHASES = { search: "Αναζήτηση στη Διαύγεια…", pdf: "Κατέβασμα και ανάλυση PDF",
+                 geocode: "Γεωκωδικοποίηση (εμπλουτισμός — τα αρχεία είναι ήδη διαθέσιμα)" };
+const MAXROWS = 500;
+
+/* ---------- tabs ---------- */
+function showTab(name) {
+  for (const t of ["search", "history"]) {
+    $("tab-" + t).classList.toggle("on", t === name);
+    $("panel-" + t).classList.toggle("hidden", t !== name);
+  }
+  if (name === "history") loadHistory();
+}
+function backToList() {
+  $("histview").classList.add("hidden");
+  $("histlist").classList.remove("hidden");
+}
+
+/* ---------- autocomplete ---------- */
+let AREAS = null, acSel = -1, acItems = [];
+const norm = s => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+                   .toUpperCase().replace(/-/g, " ").replace(/\s+/g, " ").trim();
+async function ensureAreas() {
+  if (!AREAS) AREAS = await (await fetch("/api/areas")).json();
+}
+$("area").addEventListener("input", async () => {
+  await ensureAreas();
+  const q = norm($("area").value);
+  if (q.length < 2) return hideAc();
+  const starts = AREAS.filter(a => a.norm.startsWith(q));
+  const within = AREAS.filter(a => !a.norm.startsWith(q) && a.norm.includes(q));
+  acItems = starts.concat(within).slice(0, 12);
+  acSel = -1;
+  const list = $("aclist");
+  list.innerHTML = "";
+  for (const a of acItems) {
+    const d = document.createElement("div");
+    d.innerHTML = `<span></span><span class="t"></span>`;
+    d.firstChild.textContent = a.label;
+    d.lastChild.textContent = a.type;
+    d.onmousedown = e => { e.preventDefault(); pickAc(a); };
+    list.appendChild(d);
+  }
+  list.classList.toggle("hidden", !acItems.length);
+});
+$("area").addEventListener("keydown", e => {
+  if ($("aclist").classList.contains("hidden")) return;
+  if (e.key === "ArrowDown") { acSel = Math.min(acSel + 1, acItems.length - 1); }
+  else if (e.key === "ArrowUp") { acSel = Math.max(acSel - 1, 0); }
+  else if (e.key === "Enter" && acSel >= 0) { e.preventDefault(); pickAc(acItems[acSel]); return; }
+  else if (e.key === "Escape") { hideAc(); return; }
+  else return;
+  e.preventDefault();
+  [...$("aclist").children].forEach((d, i) => d.classList.toggle("sel", i === acSel));
+});
+$("area").addEventListener("blur", () => setTimeout(hideAc, 150));
+function pickAc(a) { $("area").value = a.label; hideAc(); }
+function hideAc() { $("aclist").classList.add("hidden"); acSel = -1; }
+
+/* ---------- run + polling ---------- */
+let cursor = 0, polling = null, rowsShownFor = null;
+$("form").addEventListener("submit", async e => {
+  e.preventDefault();
+  $("formerr").classList.add("hidden");
+  const body = { area: $("area").value, from: $("from").value, to: $("to").value };
+  const r = await fetch("/api/run", { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) {
+    $("formerr").textContent = (await r.json()).error;
+    $("formerr").classList.remove("hidden");
+    return;
+  }
+  $("results").classList.add("hidden");
+  $("results").innerHTML = "";
+  $("log").textContent = "";
+  cursor = 0; rowsShownFor = null;
+  startPolling();
+});
+$("cancel").addEventListener("click", () => fetch("/api/cancel", { method: "POST" }));
+
+function startPolling() {
+  $("progress").classList.remove("hidden");
+  $("go").disabled = true;
+  if (!polling) polling = setInterval(poll, 1000);
+  poll();
+}
+async function poll() {
+  const s = await (await fetch("/api/status?since=" + cursor)).json();
+  cursor = s.cursor;
+  if (s.log.length) {
+    $("log").textContent += s.log.join("\n") + "\n";
+    $("log").scrollTop = $("log").scrollHeight;
+  }
+  const active = s.state === "running" || s.state === "geocoding";
+  $("phaselabel").textContent = PHASES[s.phase] || "Εκκίνηση…";
+  if (s.n > 0) {
+    $("bar").classList.remove("indet");
+    $("barfill").style.width = (100 * s.i / s.n).toFixed(1) + "%";
+    $("phaselabel").textContent += ` — ${s.i}/${s.n}`;
+  } else {
+    $("bar").classList.add("indet");
+  }
+  if (s.result && rowsShownFor !== s.result.run_id + s.state) {
+    rowsShownFor = s.result.run_id + s.state;   // ξανά-render όταν αλλάζει φάση
+    await renderResults($("results"), s.result, active && s.state === "geocoding");
+    $("results").classList.remove("hidden");
+  }
+  if (!active) {
+    clearInterval(polling); polling = null;
+    $("go").disabled = false;
+    $("progress").classList.toggle("hidden", s.state !== "error" && s.state !== "cancelled");
+    if (s.state === "error") {
+      $("phaselabel").textContent = "";
+      $("formerr").textContent = s.error || "Σφάλμα";
+      $("formerr").classList.remove("hidden");
+      $("progress").classList.add("hidden");
+    } else if (s.state === "cancelled") {
+      $("phaselabel").textContent = "Ακυρώθηκε.";
+      $("bar").classList.remove("indet");
+    }
+  }
+}
+
+/* ---------- results view ---------- */
+async function renderResults(container, manifest, geocodingNow) {
+  const rows = await (await fetch(`/api/runs/${manifest.run_id}/rows`)).json();
+  container.innerHTML = "";
+  const h = document.createElement("div");
+  const dupNote = manifest.n_dups
+    ? ` — ${manifest.n_dups} πιθανά διπλά (στήλη «Έλεγχος»)` : "";
+  h.innerHTML = `<h2 style="margin:.2rem 0"></h2>
+    <div class="note">${manifest.from} έως ${manifest.to} ·
+      <b>${manifest.n_rows}</b> άδειες${dupNote}</div>
+    <div class="dl">
+      <a class="btn" href="${manifest.xlsx_url}">Λήψη Excel</a>
+      <a class="btn alt" href="${manifest.zip_url}">Λήψη όλων (zip)</a>
+    </div>`;
+  h.querySelector("h2").textContent = manifest.area;
+  if (!manifest.geocoded && !geocodingNow) {
+    const b = document.createElement("button");
+    b.className = "minor";
+    b.textContent = "Προσθήκη συντεταγμένων";
+    b.onclick = async () => {
+      const r = await fetch("/api/geocode/" + manifest.run_id, { method: "POST" });
+      if (r.ok) { showTab("search"); cursor = 0; rowsShownFor = null; startPolling(); }
+      else { alert((await r.json()).error); }
+    };
+    h.querySelector(".dl").appendChild(b);
+  } else if (!manifest.geocoded && geocodingNow) {
+    h.querySelector(".dl").insertAdjacentHTML("beforeend",
+      `<span class="tag no">συντεταγμένες σε εξέλιξη…</span>`);
+  }
+  container.appendChild(h);
+  container.appendChild(buildTable(rows, manifest.run_id));
+}
+
+const COLS = [
+  ["Ημ/νία", r => r.date],
+  ["Δήμος", r => r.dimos],
+  ["Πόλη/Οικισμός", r => r.poli],
+  ["Οδός", r => (r.odos + " " + (r.ar_apo || "")).trim()],
+  ["Όροφοι", r => r.orofoi ?? ""],
+  ["Περιγραφή", r => r.perigrafi, "desc"],
+  ["Συντ/νες", r => r.lat ? "📍" : "", null,
+    r => r.lat ? `https://www.openstreetmap.org/?mlat=${r.lat}&mlon=${r.lon}#map=18/${r.lat}/${r.lon}` : null],
+  ["ΑΔΑ", r => r.ada, null, r => r.url],
+  ["PDF", r => r.pdf_path ? "PDF" : "", null,
+    (r, runId) => r.pdf_path ? `/runs/${runId}/${r.pdf_path}` : null],
+  ["Έλεγχος", r => r.flags],
+];
+
+function buildTable(rows, runId) {
+  const box = document.createElement("div");
+  const dimoi = [...new Set(rows.map(r => r.dimos))].sort();
+  const orofoi = [...new Set(rows.map(r => r.orofoi).filter(x => x != null))].sort((a, b) => a - b);
+  box.innerHTML = `<div class="filters">
+      <input id="ftext" placeholder="Φίλτρο κειμένου (οδός, περιγραφή…)">
+      <select id="fdimos"><option value="">Όλοι οι δήμοι</option></select>
+      <select id="forofoi"><option value="">Όλοι οι όροφοι</option></select>
+      <select id="fdup"><option value="">Όλες οι εγγραφές</option>
+        <option value="clean">Χωρίς πιθανά διπλά</option></select>
+    </div>
+    <div class="tablewrap"><table><thead><tr></tr></thead><tbody></tbody></table></div>
+    <div class="note" id="tnote"></div>`;
+  const fd = box.querySelector("#fdimos");
+  for (const d of dimoi) fd.add(new Option(d, d));
+  const fo = box.querySelector("#forofoi");
+  for (const o of orofoi) fo.add(new Option(o, o));
+  if (dimoi.length < 2) fd.classList.add("hidden");
+
+  const tr = box.querySelector("thead tr");
+  let sortKey = 0, sortDir = 1;
+  COLS.forEach(([name], idx) => {
+    const th = document.createElement("th");
+    th.textContent = name;
+    th.onclick = () => { sortDir = sortKey === idx ? -sortDir : 1; sortKey = idx; redraw(); };
+    tr.appendChild(th);
+  });
+
+  function redraw() {
+    const q = norm(box.querySelector("#ftext").value);
+    const dim = fd.value, oro = fo.value, dup = box.querySelector("#fdup").value;
+    let view = rows.filter(r =>
+      (!dim || r.dimos === dim) &&
+      (!oro || String(r.orofoi) === oro) &&
+      (!dup || !(r.flags || "").includes("πιθανό διπλό")) &&
+      (!q || norm([r.odos, r.poli, r.perigrafi, r.dim_enotita, r.ada].join(" ")).includes(q)));
+    const get = COLS[sortKey][1];
+    view.sort((a, b) => {
+      const x = get(a), y = get(b);
+      return (x === y ? 0 : x > y ? 1 : -1) * sortDir;
+    });
+    const total = view.length;
+    view = view.slice(0, MAXROWS);
+    const tbody = box.querySelector("tbody");
+    tbody.innerHTML = "";
+    for (const r of view) {
+      const trow = document.createElement("tr");
+      for (const [, get2, cls, href] of COLS) {
+        const td = document.createElement("td");
+        if (cls) td.className = cls;
+        const url = href && href(r, runId);
+        if (url) {
+          const a = document.createElement("a");
+          a.href = url; a.target = "_blank"; a.textContent = get2(r);
+          td.appendChild(a);
+        } else {
+          td.textContent = get2(r);
+        }
+        trow.appendChild(td);
+      }
+      tbody.appendChild(trow);
+    }
+    box.querySelector("#tnote").textContent = total > MAXROWS
+      ? `Εμφανίζονται οι πρώτες ${MAXROWS} από ${total} εγγραφές — περιορίστε με τα φίλτρα.`
+      : `${total} εγγραφές`;
+  }
+  box.querySelectorAll("input,select").forEach(el => el.addEventListener("input", redraw));
+  redraw();
+  return box;
+}
+
+/* ---------- history ---------- */
+async function loadHistory() {
+  const runs = await (await fetch("/api/runs")).json();
+  const list = $("histlist");
+  list.classList.remove("hidden");
+  $("histview").classList.add("hidden");
+  list.innerHTML = runs.length ? "" : `<div class="note">Δεν υπάρχουν αποθηκευμένα runs.</div>`;
+  for (const m of runs) {
+    const d = document.createElement("div");
+    d.className = "runcard";
+    d.innerHTML = `<b></b><span>${m.from} – ${m.to}</span>
+      <span>${m.n_rows} άδειες</span>
+      <span class="tag ${m.geocoded ? "" : "no"}">${m.geocoded ? "με συντεταγμένες" : "χωρίς συντεταγμένες"}</span>
+      <span>${m.created}</span>`;
+    d.querySelector("b").textContent = m.area;
+    d.onclick = async () => {
+      list.classList.add("hidden");
+      $("histview").classList.remove("hidden");
+      await renderResults($("histresults"), m, false);
+    };
+    list.appendChild(d);
+  }
+}
+
+/* ---------- resume on load ---------- */
+(async () => {
+  const s = await (await fetch("/api/status?since=0")).json();
+  if (s.state === "running" || s.state === "geocoding") startPolling();
+})();
+</script>
+</body>
+</html>
