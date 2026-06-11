@@ -11,6 +11,7 @@ COLUMNS = [
     ("ΑΔΑ", "ada", 16),
     ("Ημ/νία έκδοσης", "date", 14),
     ("Έτος", "year", 7),
+    ("Είδος", "eidos", 22),
     ("Δήμος", "dimos", 26),
     ("Δημοτική Ενότητα/Περιοχή", "dim_enotita", 24),
     ("Πόλη/Οικισμός", "poli", 20),
@@ -63,11 +64,22 @@ def write_xlsx(rows, out_path):
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = f"A1:{get_column_letter(len(COLUMNS))}{max(len(rows) + 1, 2)}"
 
-    # pivot: γραμμές = έτη, στήλες = δήμοι
+    # pivot αυτοτελών αδειών (συγκρίσιμο μεταξύ ερευνών)· οι ενιαίες
+    # οικοδομικές-με-κατεδάφιση, αν υπάρχουν, σε δικό τους φύλλο
+    pure = [r for r in rows if r.get("eidos", "κατεδάφιση") == "κατεδάφιση"]
+    bundled = [r for r in rows if r.get("eidos", "κατεδάφιση") != "κατεδάφιση"]
+    _pivot_sheet(wb, "Ανά έτος-δήμο", pure, bold)
+    if bundled:
+        _pivot_sheet(wb, "Οικοδομικές με κατεδάφιση", bundled, bold)
+
+    wb.save(out_path)
+
+
+def _pivot_sheet(wb, title, rows, bold):
     pivot = Counter((row["year"], row["dimos"]) for row in rows)
     years = sorted({y for y, _ in pivot})
     dimoi = sorted({d for _, d in pivot})
-    ws2 = wb.create_sheet("Ανά έτος-δήμο")
+    ws2 = wb.create_sheet(title)
     ws2.cell(row=1, column=1, value="Έτος").font = bold
     for c, d in enumerate(dimoi, 2):
         ws2.cell(row=1, column=c, value=d).font = bold
@@ -85,5 +97,3 @@ def write_xlsx(rows, out_path):
         ws2.cell(row=total_row, column=c,
                  value=sum(pivot.get((y, d), 0) for y in years))
     ws2.cell(row=total_row, column=len(dimoi) + 2, value=len(rows)).font = bold
-
-    wb.save(out_path)

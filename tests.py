@@ -12,10 +12,11 @@ from pathlib import Path
 CACHE = str(Path(__file__).parent / "cache")
 
 from katedafiseis.areas import AreaError, list_areas, normalize, resolve_area
+from katedafiseis.diavgeia import KIND_KATEDAFISI, KIND_OIKODOMIKI, permit_kind
 from katedafiseis.egsa87 import egsa87_to_wgs84
 from katedafiseis.geocode import _poli_variants, _strip_dimos
 from katedafiseis.greek import dimos_display, greek_title, pretty_area
-from katedafiseis.output import write_xlsx
+from katedafiseis.output import COLUMNS, write_xlsx
 from katedafiseis.pdfparse import (_clean, detect_floors, extract_polygon,
                                    parse_fields)
 
@@ -155,6 +156,30 @@ class TestParseFields(unittest.TestCase):
         self.assertEqual(_clean("τιμή "), "τιμή")
 
 
+class TestPermitKind(unittest.TestCase):
+    def test_katedafisi(self):
+        self.assertEqual(permit_kind(
+            "Άδεια Κατεδάφισης (ν.4759/2020): ΚΑΤΕΔΑΦΙΣΗ ΔΙΩΡΟΦΗΣ"),
+            KIND_KATEDAFISI)
+
+    def test_oikodomiki_me_katedafisi(self):
+        self.assertEqual(permit_kind(
+            "Οικοδομική Άδεια (ν.4759/2020): ΑΔΕΙΑ ΚΑΤΕΔΑΦΙΣΗΣ & ΑΝΕΓΕΡΣΗ "
+            "ΝΕΟΥ ΔΙΩΡΟΦΟΥ"), KIND_OIKODOMIKI)
+        self.assertEqual(permit_kind(
+            "Οικοδομική άδεια Κατηγορίας 1 χωρίς προέγκριση: Κατεδάφιση και "
+            "ανέγερση"), KIND_OIKODOMIKI)
+
+    def test_aporriptontai(self):
+        for s in ("Προέγκριση Άδειας Κατεδάφισης: ...",
+                  "Αναθεώρηση Άδειας Κατεδάφισης: ...",
+                  "Ενημέρωση Οικοδομικής Άδειας: ΚΑΤΕΔΑΦΙΣΗ ...",
+                  "Προέγκριση Οικοδομικής Άδειας: ΚΑΤΕΔΑΦΙΣΗ ...",
+                  "Οικοδομική Άδεια (ν.4759/2020): ΑΝΕΓΕΡΣΗ ΚΑΤΟΙΚΙΑΣ",
+                  "Έγκριση Εκτέλεσης Εργασιών: ΚΑΤΕΔΑΦΙΣΗ ΕΠΙΚΙΝΔΥΝΟΥ"):
+            self.assertIsNone(permit_kind(s), s)
+
+
 class TestEgsa87(unittest.TestCase):
     def test_drama(self):
         lat, lon = egsa87_to_wgs84(512801.149, 4555388.78)
@@ -227,22 +252,45 @@ class TestOutput(unittest.TestCase):
              "orofoi": None, "lat": None, "lon": None, "precision": "",
              "parse_ok": False, "pdf_path": "", "flags": "πιθανό διπλό"},
         ]
+        col = {key: i for i, (_, key, _) in enumerate(COLUMNS, 1)}
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "out.xlsx"
             write_xlsx(rows, path)
             wb = load_workbook(path)
             ws = wb["Κατεδαφίσεις"]
             self.assertEqual(ws.max_row, 3)
-            self.assertEqual(ws.cell(2, 1).hyperlink.target,
+            self.assertEqual(ws.cell(2, col["ada"]).hyperlink.target,
                              "https://diavgeia.gov.gr/decision/view/ΑΔΑ1")
-            self.assertEqual(ws.cell(2, 2).number_format, "DD/MM/YYYY")
-            self.assertEqual(ws.cell(2, 18).hyperlink.target,
+            self.assertEqual(ws.cell(2, col["date"]).number_format, "DD/MM/YYYY")
+            self.assertEqual(ws.cell(2, col["pdf_path"]).hyperlink.target,
                              "pdf/Δήμος Δράμας/2021/ΑΔΑ1.pdf")
-            self.assertIsNone(ws.cell(3, 18).hyperlink)      # χωρίς PDF
-            self.assertEqual(ws.cell(3, 17).value, "ΟΧΙ")   # parse_ok
+            self.assertIsNone(ws.cell(3, col["pdf_path"]).hyperlink)  # χωρίς PDF
+            self.assertEqual(ws.cell(3, col["parse_ok"]).value, "ΟΧΙ")
             pivot = wb["Ανά έτος-δήμο"]
             self.assertEqual(pivot.cell(1, 2).value, "Δήμος Δράμας")
             self.assertEqual(pivot.cell(4, 4).value, 2)      # γενικό σύνολο
+            self.assertNotIn("Οικοδομικές με κατεδάφιση", wb.sheetnames)
+
+    def test_xlsx_me_oikodomikes(self):
+        from openpyxl import load_workbook
+        base = {"ada": "Χ", "url": "u", "dim_enotita": "", "poli": "",
+                "odos": "", "ar_apo": "", "ar_eos": "", "ot": "", "kaek": "",
+                "perigrafi": "", "orofoi": None, "lat": None, "lon": None,
+                "precision": "", "parse_ok": True, "pdf_path": "", "flags": ""}
+        rows = [
+            {**base, "date": "2021-01-01", "year": 2021,
+             "dimos": "Δήμος Δράμας", "eidos": "κατεδάφιση"},
+            {**base, "date": "2021-02-01", "year": 2021,
+             "dimos": "Δήμος Δράμας", "eidos": "οικοδομική με κατεδάφιση"},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "out.xlsx"
+            write_xlsx(rows, path)
+            wb = load_workbook(path)
+            self.assertIn("Οικοδομικές με κατεδάφιση", wb.sheetnames)
+            # το βασικό pivot μετρά μόνο τις αυτοτελείς
+            self.assertEqual(wb["Ανά έτος-δήμο"].cell(3, 3).value, 1)
+            self.assertEqual(wb["Οικοδομικές με κατεδάφιση"].cell(3, 3).value, 1)
 
 
 class TestRunsConsistency(unittest.TestCase):

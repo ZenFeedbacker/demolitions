@@ -16,7 +16,7 @@ from datetime import date
 from pathlib import Path
 
 from .areas import normalize, resolve_area
-from .diavgeia import search_permits, issue_date
+from .diavgeia import KIND_KATEDAFISI, issue_date, permit_kind, search_permits
 from .geocode import Geocoder
 from .greek import dimos_display, pretty_area
 from .output import write_xlsx
@@ -92,6 +92,7 @@ def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
         row["date"] = dt.isoformat()
         row["year"] = dt.year
         row["dimos"] = dimos_display(munis[d["extraFieldValues"]["municipality"]])
+        row["eidos"] = permit_kind(d.get("subject", "")) or KIND_KATEDAFISI
         row["flags"] = ""
         # ίδιο κτίσμα με >1 τελικές άδειες (επανεκδόσεις) — συχνό φαινόμενο
         key = (d["extraFieldValues"]["municipality"],

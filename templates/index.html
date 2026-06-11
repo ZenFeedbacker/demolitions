@@ -345,7 +345,8 @@ function addMapToggle(box, rows, runId) {
       const addr = [r.odos, r.ar_apo].filter(Boolean).join(" ");
       m.bindPopup(
         `<b>${esc(dmy(r.date))}</b> — ${esc([addr, r.poli].filter(Boolean).join(", "))}<br>` +
-        `${esc(r.dimos)}${r.orofoi ? ` · ${esc(r.orofoi)} όροφοι` : ""}<br>` +
+        `${esc(r.dimos)}${r.orofoi ? ` · ${esc(r.orofoi)} όροφοι` : ""}` +
+        `${r.eidos && r.eidos !== "κατεδάφιση" ? ` · ${esc(r.eidos)}` : ""}<br>` +
         `${esc(r.perigrafi)}<br>` +
         `<a href="https://diavgeia.gov.gr/decision/view/${esc(r.ada)}" target="_blank">${esc(r.ada)}</a>` +
         (r.pdf_path ? ` · <a href="/runs/${esc(runId)}/${esc(r.pdf_path)}" target="_blank">PDF</a>` : "") +
@@ -441,9 +442,11 @@ function buildTable(rows, runId) {
   const box = document.createElement("div");
   const dimoi = [...new Set(rows.map(r => r.dimos))].sort();
   const orofoi = [...new Set(rows.map(r => r.orofoi).filter(x => x != null))].sort((a, b) => a - b);
+  const eidi = [...new Set(rows.map(r => r.eidos || "κατεδάφιση"))].sort();
   box.innerHTML = `<div class="filters">
       <input class="ftext" placeholder="Φίλτρο κειμένου (οδός, περιγραφή…)">
       <select class="fdimos"><option value="">Όλοι οι δήμοι</option></select>
+      <select class="feidos"><option value="">Όλα τα είδη αδειών</option></select>
       <select class="forofoi"><option value="">Όλοι οι όροφοι</option></select>
       <select class="fdup"><option value="">Όλες οι εγγραφές</option>
         <option value="clean">Χωρίς πιθανά διπλά</option></select>
@@ -452,9 +455,12 @@ function buildTable(rows, runId) {
     <div class="note tnote"></div>`;
   const fd = box.querySelector(".fdimos");
   for (const d of dimoi) fd.add(new Option(d, d));
+  const fe = box.querySelector(".feidos");
+  for (const e of eidi) fe.add(new Option(e, e));
   const fo = box.querySelector(".forofoi");
   for (const o of orofoi) fo.add(new Option(o, o));
   if (dimoi.length < 2) fd.classList.add("hidden");
+  if (eidi.length < 2) fe.classList.add("hidden");
 
   const tr = box.querySelector("thead tr");
   let sortKey = 0, sortDir = 1;
@@ -468,8 +474,10 @@ function buildTable(rows, runId) {
   function redraw() {
     const q = norm(box.querySelector(".ftext").value);
     const dim = fd.value, oro = fo.value, dup = box.querySelector(".fdup").value;
+    const eid = fe.value;
     let view = rows.filter(r =>
       (!dim || r.dimos === dim) &&
+      (!eid || (r.eidos || "κατεδάφιση") === eid) &&
       (!oro || String(r.orofoi) === oro) &&
       (!dup || !(r.flags || "").includes("πιθανό διπλό")) &&
       (!q || norm([r.odos, r.poli, r.perigrafi, r.dim_enotita, r.ada].join(" ")).includes(q)));

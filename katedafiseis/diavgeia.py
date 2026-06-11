@@ -19,7 +19,25 @@ from .areas import normalize
 SEARCH_URL = "https://diavgeia.gov.gr/opendata/search/advanced"
 TEE_ORG = "99201077"
 PAGE_SIZE = 500
-SUBJECT_PREFIX = "ΑΔΕΙΑ ΚΑΤΕΔΑΦΙΣΗΣ"
+
+KIND_KATEDAFISI = "κατεδάφιση"
+KIND_OIKODOMIKI = "οικοδομική με κατεδάφιση"
+
+
+def permit_kind(subject):
+    """Είδος τελικής άδειας που αφορά κατεδάφιση, αλλιώς None.
+
+    «Άδεια Κατεδάφισης…» = αυτοτελής άδεια· «Οικοδομική Άδεια…» που
+    αναφέρει κατεδάφιση στην περιγραφή = ενιαία άδεια (συνήθως
+    κατεδάφιση-και-ανέγερση). Προεγκρίσεις/αναθεωρήσεις/ενημερώσεις
+    αποκλείονται και στις δύο περιπτώσεις (το startswith τις κόβει).
+    """
+    subj = normalize(subject)
+    if subj.startswith("ΑΔΕΙΑ ΚΑΤΕΔΑΦΙΣΗΣ"):
+        return KIND_KATEDAFISI
+    if subj.startswith("ΟΙΚΟΔΟΜΙΚΗ ΑΔΕΙΑ") and "ΚΑΤΕΔΑΦΙΣ" in subj:
+        return KIND_OIKODOMIKI
+    return None
 
 session = requests.Session()
 session.headers["User-Agent"] = "katedafiseis-research/1.0 (ffeizidis@grnet.gr)"
@@ -89,7 +107,7 @@ def search_permits(from_date, to_date, muni_codes, cache_dir, progress=print):
         kept = 0
         for d in decisions:
             # το stemming επιστρέφει και Προεγκρίσεις/Αναθεωρήσεις/Ενημερώσεις
-            if not normalize(d.get("subject", "")).startswith(SUBJECT_PREFIX):
+            if not permit_kind(d.get("subject", "")):
                 continue
             muni = (d.get("extraFieldValues") or {}).get("municipality")
             if muni not in muni_codes:
