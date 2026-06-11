@@ -34,6 +34,11 @@ FLOOR_PATTERNS = [
     (r"ΔΙ[ΩΟΥ][ΟΡ]?ΡΟΦ|ΔΙΟΡΩΦ|ΔΥΟΡΟΦ", 2),
     (r"ΜΟΝ[ΩΟ]ΡΟΦ|ΜΟΝΟΡΩΦ|ΙΣ[ΟΩ]ΓΕΙ", 1),
 ]
+# «ΚΑΤΟΙΚΙΑ 2 ΟΡΟΦΩΝ», «ΔΥΟ ΟΡΟΦΟΙ» κ.λπ.
+NUM_FLOORS_RE = re.compile(r"\b(\d{1,2})\s*ΟΡΟΦ")
+WORD_FLOORS_RE = re.compile(r"\b(ΕΝΟΣ|ΔΥΟ|ΤΡΙΩΝ|ΤΕΣΣΑΡΩΝ|ΠΕΝΤΕ|ΕΞΙ)\s+ΟΡΟΦ")
+WORD_NUM = {"ΕΝΟΣ": 1, "ΔΥΟ": 2, "ΤΡΙΩΝ": 3, "ΤΕΣΣΑΡΩΝ": 4,
+            "ΠΕΝΤΕ": 5, "ΕΞΙ": 6}
 
 
 def download_pdf(decision, cache_dir):
@@ -94,6 +99,10 @@ def parse_fields(text):
 def detect_floors(description_norm):
     """Μέγιστος αριθμός ορόφων που αναφέρεται στην (κανονικοποιημένη) περιγραφή."""
     floors = [n for pat, n in FLOOR_PATTERNS if re.search(pat, description_norm)]
+    floors += [int(m.group(1)) for m in NUM_FLOORS_RE.finditer(description_norm)
+               if 1 <= int(m.group(1)) <= 12]
+    floors += [WORD_NUM[m.group(1)]
+               for m in WORD_FLOORS_RE.finditer(description_norm)]
     return max(floors) if floors else None
 
 
