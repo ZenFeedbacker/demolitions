@@ -167,19 +167,21 @@ def list_areas(cache_dir):
     Κάθε εγγραφή: {label, norm, type}· το label περνά αυτούσιο στο
     resolve_area, το norm είναι για φιλτράρισμα χωρίς τόνους/πεζά.
     """
+    from .greek import dimos_display, greek_title  # εδώ λόγω κυκλικού import
+
     regions, munis, _ = load_kallikratis(cache_dir)
     multi_pe = {p for prefixes in NOMOS_PREFIXES.values() for p in prefixes}
     areas = [{"label": "Ελλάδα", "type": "χώρα"}]
-    areas += [{"label": label, "type": "περιφέρεια"}
+    areas += [{"label": greek_title(label), "type": "περιφέρεια"}
               for label in sorted(regions.values())]
-    areas += [{"label": "Νομός " + name.title(), "type": "νομός"}
+    areas += [{"label": greek_title("Νομός " + name), "type": "νομός"}
               for name in sorted(NOMOS_PREFIXES)]
     for prefix, name in sorted(PREFIX_PE.items(), key=lambda kv: kv[1]):
         # ΠΕ μέσα σε πολυ-ΠΕ νομό κρατούν το «ΠΕ»· οι υπόλοιπες είναι
         # ταυτόσημες με τον παλιό νομό
         kind = "ΠΕ " if prefix in multi_pe else "Νομός "
-        areas.append({"label": kind + name.title(), "type": "νομός/ΠΕ"})
-    areas += [{"label": label, "type": "δήμος"}
+        areas.append({"label": greek_title(kind + name), "type": "νομός/ΠΕ"})
+    areas += [{"label": dimos_display(label), "type": "δήμος"}
               for label in sorted(munis.values())]
     for a in areas:
         a["norm"] = normalize(a["label"])

@@ -7,6 +7,7 @@
 
 import json
 import math
+import re
 import time
 from pathlib import Path
 
@@ -20,6 +21,11 @@ LON_RANGE = (19.0, 30.1)
 
 session = requests.Session()
 session.headers["User-Agent"] = USER_AGENT
+
+
+def _strip_dimos(label):
+    """«Δήμος Δράμας»/«ΔΗΜΟΣ ΔΡΑΜΑΣ» -> «Δράμας»."""
+    return re.sub(r"^(ΔΗΜΟΣ|Δήμος)\s+", "", label).title()
 
 
 class Geocoder:
@@ -65,8 +71,8 @@ class Geocoder:
 
     def geocode_row(self, row, dimos_label):
         """Επιστρέφει (lat, lon, precision) ή (None, None, '')."""
-        # «ΔΗΜΟΣ ΔΡΑΜΑΣ» -> «Δράμας» για πιο φυσικά queries
-        dimos = row.get("dimos_pdf") or dimos_label.replace("ΔΗΜΟΣ ", "").title()
+        # «Δήμος Δράμας» -> «Δράμας» για πιο φυσικά queries
+        dimos = row.get("dimos_pdf") or _strip_dimos(dimos_label)
         odos, ar, poli = row.get("odos"), row.get("ar_apo"), row.get("poli")
         # «ΔΡΑΜΑ/ΠΡΟΑΣΤΕΙΟ» -> δοκίμασε και σκέτο «ΔΡΑΜΑ»
         polis = [p.strip() for p in dict.fromkeys([poli, poli.split("/")[0]]) if p.strip()]
@@ -97,7 +103,7 @@ class Geocoder:
         """
         if not row.get("lat"):
             return None
-        dimos = dimos_label.replace("ΔΗΜΟΣ ", "").title()
+        dimos = _strip_dimos(dimos_label)
         hit = self._query(f"Δήμος {dimos}, Ελλάδα")
         if not hit:
             return None

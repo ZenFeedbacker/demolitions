@@ -11,6 +11,7 @@ from pathlib import Path
 
 from .areas import normalize
 from .diavgeia import session
+from .greek import greek_title
 
 FIELD_LABELS = {
     "odos": "Οδός",
@@ -102,7 +103,7 @@ def parse_decision(decision, cache_dir):
     description = subject.split(":", 1)[1].strip() if ":" in subject else subject
     row = {
         "ada": decision["ada"],
-        "url": f"https://diavgeia.gov.gr/doc/{decision['ada']}",
+        "url": f"https://diavgeia.gov.gr/decision/view/{decision['ada']}",
         "perigrafi": description,
         "parse_ok": False,
         "odos": "", "ar_apo": "", "ar_eos": "", "poli": "",
@@ -117,9 +118,11 @@ def parse_decision(decision, cache_dir):
             # προτιμάμε το (πλήρες) subject και κρατάμε το PDF ως fallback
             if not description and fields["perigrafi"]:
                 row["perigrafi"] = fields["perigrafi"]
-            for k in ("odos", "ar_apo", "ar_eos", "poli",
-                      "dimos_pdf", "dim_enotita", "ot", "kaek"):
+            for k in ("ar_apo", "ar_eos", "ot", "kaek"):
                 row[k] = fields[k]
+            # τα τοπωνύμια της φόρμας είναι ΚΕΦΑΛΑΙΑ ΑΤΟΝΑ
+            for k in ("odos", "poli", "dimos_pdf", "dim_enotita"):
+                row[k] = greek_title(fields[k])
             row["parse_ok"] = bool(fields["poli"] or fields["odos"])
     row["orofoi"] = detect_floors(normalize(row["perigrafi"]))
     return row

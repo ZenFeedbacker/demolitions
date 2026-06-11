@@ -18,6 +18,7 @@ from pathlib import Path
 from .areas import normalize, resolve_area
 from .diavgeia import search_permits, issue_date
 from .geocode import Geocoder
+from .greek import dimos_display, pretty_area
 from .output import write_xlsx
 from .pdfparse import parse_decision
 
@@ -62,6 +63,7 @@ def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
         from_date = E_ADEIES_START
 
     area_label, munis = resolve_area(area, cache_dir)
+    area_label = pretty_area(area_label)
     log(f"Περιοχή: {area_label} ({len(munis)} δήμοι)")
     log(f"Διάστημα: {from_date:%d/%m/%Y} – {to_date:%d/%m/%Y}")
 
@@ -89,7 +91,7 @@ def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
         dt = issue_date(d)
         row["date"] = dt.isoformat()
         row["year"] = dt.year
-        row["dimos"] = munis[d["extraFieldValues"]["municipality"]]
+        row["dimos"] = dimos_display(munis[d["extraFieldValues"]["municipality"]])
         row["flags"] = ""
         # ίδιο κτίσμα με >1 τελικές άδειες (επανεκδόσεις) — συχνό φαινόμενο
         key = (d["extraFieldValues"]["municipality"],
