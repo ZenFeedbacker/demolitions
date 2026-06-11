@@ -1,0 +1,125 @@
+"""Κατέβασμα και ανάλυση των PDF αδειών (φόρμα e-Άδειες).
+
+Η φόρμα έχει σταθερές ετικέτες πεδίων («Οδός», «Πόλη/Οικισμός» κ.λπ.)
+αριστερά και τιμές δεξιά· το `pdftotext -layout` διατηρεί τη στοίχιση.
+"""
+
+import re
+import subprocess
+import time
+from pathlib import Path
+
+from .areas import normalize
+from .diavgeia import session
+
+FIELD_LABELS = {
+    "odos": "Οδός",
+    "ar_apo": "Αρ. από",
+    "ar_eos": "Αρ. έως",
+    "poli": "Πόλη/Οικισμός",
+    "dimos_pdf": "Δήμος",
+    "dim_enotita": "Δημοτική Ενότητα /",
+    "ot": "ΟΤ",
+    "kaek": "ΚΑΕΚ",
+    "perigrafi": "Περιγραφή έργου",
+}
+
+# αριθμός ορόφων από την περιγραφή· πιάνει και συχνά ορθογραφικά (ΔΙΟΡΩΦ...)
+FLOOR_PATTERNS = [
+    (r"ΕΞΑ[ΩΟ]ΡΟΦ", 6),
+    (r"ΠΕΝΤΑ[ΩΟ]ΡΟΦ", 5),
+    (r"ΤΕΤΡΑ[ΩΟ]ΡΟΦ|ΤΕΤΡΑΟΡΩΦ", 4),
+    (r"ΤΡΙ[ΩΟ]ΡΟΦ|ΤΡΙΟΡΩΦ", 3),
+    (r"ΔΙ[ΩΟΥ][ΟΡ]?ΡΟΦ|ΔΙΟΡΩΦ|ΔΥΟΡΟΦ", 2),
+    (r"ΜΟΝ[ΩΟ]ΡΟΦ|ΜΟΝΟΡΩΦ|ΙΣ[ΟΩ]ΓΕΙ", 1),
+]
+
+
+def download_pdf(decision, cache_dir):
+    """Επιστρέφει το path του PDF στην cache, ή None αν αποτύχει."""
+    pdf_dir = Path(cache_dir) / "pdf"
+    pdf_dir.mkdir(parents=True, exist_ok=True)
+    path = pdf_dir / f"{decision['ada']}.pdf"
+    if path.exists() and path.stat().st_size > 0:
+        return path
+    # το search API συχνά γυρίζει κενό documentUrl· το URL προκύπτει από το ΑΔΑ
+    url = decision.get("documentUrl") or f"https://diavgeia.gov.gr/doc/{decision['ada']}"
+    for attempt in range(3):
+        try:
+            r = session.get(url, timeout=120)
+            r.raise_for_status()
+            if not r.content.startswith(b"%PDF"):
+                return None
+            path.write_bytes(r.content)
+            time.sleep(0.4)
+            return path
+        except Exception:
+            if attempt == 2:
+                return None
+            time.sleep(2 ** attempt)
+
+
+def pdf_text(path):
+    out = subprocess.run(
+        ["pdftotext", "-layout", str(path), "-"],
+        capture_output=True, timeout=60,
+    )
+    if out.returncode != 0:
+        return None
+    return out.stdout.decode("utf-8", errors="replace")
+
+
+def _clean(value):
+    value = value.strip()
+    return "" if value in ("-", "—", "–") else value
+
+
+def parse_fields(text):
+    """Εξάγει τα πεδία διεύθυνσης από το κείμενο της φόρμας."""
+    fields = {k: "" for k in FIELD_LABELS}
+    # κρατάμε μόνο την πρώτη σελίδα (τα ίδια labels επανεμφανίζονται σε
+    # πίνακες επόμενων σελίδων με άλλη σημασία)
+    page = text.split("\f")[0]
+    for line in page.splitlines():
+        for key, label in FIELD_LABELS.items():
+            if fields[key]:
+                continue
+            m = re.match(rf"^\s*{re.escape(label)}\s\s+(\S.*)$", line)
+            if m:
+                fields[key] = _clean(m.group(1))
+    return fields
+
+
+def detect_floors(description_norm):
+    """Μέγιστος αριθμός ορόφων που αναφέρεται στην (κανονικοποιημένη) περιγραφή."""
+    floors = [n for pat, n in FLOOR_PATTERNS if re.search(pat, description_norm)]
+    return max(floors) if floors else None
+
+
+def parse_decision(decision, cache_dir):
+    """Metadata + PDF -> ενιαίο dict εγγραφής (χωρίς συντεταγμένες ακόμα)."""
+    subject = decision.get("subject", "")
+    description = subject.split(":", 1)[1].strip() if ":" in subject else subject
+    row = {
+        "ada": decision["ada"],
+        "url": f"https://diavgeia.gov.gr/doc/{decision['ada']}",
+        "perigrafi": description,
+        "parse_ok": False,
+        "odos": "", "ar_apo": "", "ar_eos": "", "poli": "",
+        "dimos_pdf": "", "dim_enotita": "", "ot": "", "kaek": "",
+    }
+    path = download_pdf(decision, cache_dir)
+    if path:
+        text = pdf_text(path)
+        if text:
+            fields = parse_fields(text)
+            # η περιγραφή του PDF μπορεί να κόβεται σε αναδίπλωση γραμμής·
+            # προτιμάμε το (πλήρες) subject και κρατάμε το PDF ως fallback
+            if not description and fields["perigrafi"]:
+                row["perigrafi"] = fields["perigrafi"]
+            for k in ("odos", "ar_apo", "ar_eos", "poli",
+                      "dimos_pdf", "dim_enotita", "ot", "kaek"):
+                row[k] = fields[k]
+            row["parse_ok"] = bool(fields["poli"] or fields["odos"])
+    row["orofoi"] = detect_floors(normalize(row["perigrafi"]))
+    return row

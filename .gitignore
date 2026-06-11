@@ -1,0 +1,9 @@
+cache/
+__pycache__/
+*.pyc
+*.pyo
+*.xlsx
+*.pdf
+/δράμα*/
+/σύγκριση*/
+.env
