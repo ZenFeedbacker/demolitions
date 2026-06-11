@@ -85,6 +85,8 @@
   .tag { background: #e7f0e9; color: #2e6b46; border-radius: 4px; padding: .05rem .4rem;
           font-size: .75rem; }
   .tag.no { background: #f5e9e0; color: #9a5b2d; }
+  .tag.busy { background: #e8eef7; color: #1d5fa8; animation: pulse 1.3s infinite; }
+  @keyframes pulse { 50% { opacity: .45; } }
   a { color: #1d5fa8; }
   .viewtoggle { display: inline-flex; border: 1px solid var(--line); border-radius: 6px;
           overflow: hidden; margin-bottom: .6rem; }
@@ -478,17 +480,24 @@ async function loadHistory() {
   for (const m of runs) {
     const d = document.createElement("div");
     d.className = "runcard";
+    const status = m.active
+      ? `<span class="tag busy">${m.active === "geocoding"
+          ? "γεωκωδικοποίηση σε εξέλιξη…" : "αναζήτηση σε εξέλιξη…"}</span>`
+      : `<span class="tag ${m.geocoded ? "" : "no"}">${m.geocoded
+          ? "με συντεταγμένες" : "χωρίς συντεταγμένες"}</span>`;
     d.innerHTML = `<b></b><span>${dmy(m.from)} – ${dmy(m.to)}</span>
-      <span>${m.n_rows} άδειες</span>
-      <span class="tag ${m.geocoded ? "" : "no"}">${m.geocoded ? "με συντεταγμένες" : "χωρίς συντεταγμένες"}</span>
+      <span>${m.n_rows == null ? "—" : m.n_rows + " άδειες"}</span>
+      ${status}
       <span>${dmy(m.created)}</span>
-      <button class="del">Διαγραφή</button>`;
+      ${m.active ? "" : '<button class="del">Διαγραφή</button>'}`;
     d.querySelector("b").textContent = m.area;
     d.onclick = async () => {
+      if (m.active) { showTab("search"); return; }  // η πρόοδος φαίνεται εκεί
       list.classList.add("hidden");
       $("histview").classList.remove("hidden");
       await renderResults($("histresults"), m, false);
     };
+    if (m.active) { list.appendChild(d); continue; }
     d.querySelector(".del").onclick = async e => {
       e.stopPropagation();
       if (!confirm(`Διαγραφή του run «${m.area}» (${dmy(m.from)} – ${dmy(m.to)});\n\n` +

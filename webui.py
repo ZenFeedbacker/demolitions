@@ -20,6 +20,7 @@ from pathlib import Path
 from flask import Flask, abort, jsonify, render_template, request, send_from_directory
 
 from katedafiseis.areas import AreaError, list_areas, normalize, resolve_area
+from katedafiseis.greek import pretty_area
 from katedafiseis.pipeline import (CancelledRun, NoPermitsFound,
                                    enrich_geocode, run_pipeline)
 
@@ -39,6 +40,7 @@ class Job:
         self.error = None
         self.result = None
         self.run_id = None
+        self.meta = {}        # area/from/to για το ιστορικό όσο τρέχει
         self.cancel_event = threading.Event()
 
     def append(self, msg):
@@ -113,7 +115,7 @@ def _geocode_worker(run_id):
         job.state = "error"
 
 
-def _start(target, *args, state="running", result=None, run_id=None):
+def _start(target, *args, state="running", result=None, run_id=None, meta=None):
     """Ξεκινά νέο job αν δεν τρέχει ήδη κάποιο. Επιστρέφει True/False."""
     global job
     with lock:
@@ -123,6 +125,7 @@ def _start(target, *args, state="running", result=None, run_id=None):
         job.state = state
         job.result = result
         job.run_id = run_id
+        job.meta = meta or {}
         threading.Thread(target=target, args=args, daemon=True).start()
         return True
 
@@ -153,7 +156,10 @@ def api_run():
     except AreaError as e:
         return jsonify({"error": str(e)}), 400
     run_id = _slug(label, from_date, to_date)
-    if not _start(_run_worker, area, from_date, to_date, run_id, run_id=run_id):
+    meta = {"area": pretty_area(label),
+            "from": from_date.isoformat(), "to": to_date.isoformat()}
+    if not _start(_run_worker, area, from_date, to_date, run_id,
+                  run_id=run_id, meta=meta):
         return jsonify({"error": "Εκτελείται ήδη αναζήτηση."}), 409
     return jsonify({"ok": True, "run_id": run_id})
 
@@ -195,6 +201,19 @@ def api_runs():
             m["mtime"] = manifest_path.stat().st_mtime
             runs.append(m)
     runs.sort(key=lambda m: m["mtime"], reverse=True)
+    # τρέχον job: σήμανση στην υπάρχουσα εγγραφή ή συνθετική αν δεν έχει
+    # γραφτεί ακόμη run.json (φάση αναζήτησης/PDF)
+    active_id = job.run_id if job.state in ("running", "geocoding") else None
+    if active_id:
+        for m in runs:
+            if m["run_id"] == active_id:
+                m["active"] = job.state
+                break
+        else:
+            runs.insert(0, {"run_id": active_id, **job.meta, "n_rows": None,
+                            "geocoded": False, "active": job.state,
+                            "created": date.today().isoformat()})
+        runs.sort(key=lambda m: 0 if m.get("active") else 1)
     return jsonify(runs)
 
 
