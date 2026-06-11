@@ -70,13 +70,18 @@
   td.desc { max-width: 26rem; }
   .tablewrap { max-height: 65vh; overflow: auto; border-radius: 6px; }
   .note { color: #6b655a; font-size: .85rem; margin: .5rem 0; }
-  .runlist { display: flex; flex-direction: column; gap: .5rem; }
+  .runlist { display: flex; flex-direction: column; gap: .5rem;
+          max-height: min(67rem, 75vh); overflow-y: auto; }  /* scroll στις ~20 εγγραφές */
   .runcard { background: #fff; border: 1px solid var(--line); border-radius: 8px;
           padding: .7rem 1rem; cursor: pointer; display: flex; flex-wrap: wrap;
           gap: .3rem 1.4rem; align-items: baseline; }
   .runcard:hover { border-color: var(--acc); }
   .runcard b { font-size: 1rem; }
   .runcard span { color: #6b655a; font-size: .85rem; }
+  .runcard .del { margin: 0 0 0 auto; padding: .25rem .7rem; font-size: .8rem;
+          color: #a8231f; border-color: #e0c4bc; background: none;
+          border: 1px solid; border-radius: 6px; cursor: pointer; }
+  .runcard .del:hover { background: #f8e8e4; }
   .tag { background: #e7f0e9; color: #2e6b46; border-radius: 4px; padding: .05rem .4rem;
           font-size: .75rem; }
   .tag.no { background: #f5e9e0; color: #9a5b2d; }
@@ -476,12 +481,23 @@ async function loadHistory() {
     d.innerHTML = `<b></b><span>${dmy(m.from)} – ${dmy(m.to)}</span>
       <span>${m.n_rows} άδειες</span>
       <span class="tag ${m.geocoded ? "" : "no"}">${m.geocoded ? "με συντεταγμένες" : "χωρίς συντεταγμένες"}</span>
-      <span>${dmy(m.created)}</span>`;
+      <span>${dmy(m.created)}</span>
+      <button class="del">Διαγραφή</button>`;
     d.querySelector("b").textContent = m.area;
     d.onclick = async () => {
       list.classList.add("hidden");
       $("histview").classList.remove("hidden");
       await renderResults($("histresults"), m, false);
+    };
+    d.querySelector(".del").onclick = async e => {
+      e.stopPropagation();
+      if (!confirm(`Διαγραφή του run «${m.area}» (${dmy(m.from)} – ${dmy(m.to)});\n\n` +
+                   `ΠΡΟΣΟΧΗ: θα διαγραφούν οριστικά και όλα τα αρχεία του ` +
+                   `(Excel, PDF, zip).`)) return;
+      const r = await fetch(`/api/runs/${encodeURIComponent(m.run_id)}`,
+                            { method: "DELETE" });
+      if (!r.ok) alert((await r.json()).error || "Σφάλμα διαγραφής");
+      loadHistory();
     };
     list.appendChild(d);
   }

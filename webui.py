@@ -38,6 +38,7 @@ class Job:
         self.i = self.n = 0
         self.error = None
         self.result = None
+        self.run_id = None
         self.cancel_event = threading.Event()
 
     def append(self, msg):
@@ -112,7 +113,7 @@ def _geocode_worker(run_id):
         job.state = "error"
 
 
-def _start(target, *args, state="running", result=None):
+def _start(target, *args, state="running", result=None, run_id=None):
     """Ξεκινά νέο job αν δεν τρέχει ήδη κάποιο. Επιστρέφει True/False."""
     global job
     with lock:
@@ -121,6 +122,7 @@ def _start(target, *args, state="running", result=None):
         job = Job()
         job.state = state
         job.result = result
+        job.run_id = run_id
         threading.Thread(target=target, args=args, daemon=True).start()
         return True
 
@@ -151,7 +153,7 @@ def api_run():
     except AreaError as e:
         return jsonify({"error": str(e)}), 400
     run_id = _slug(label, from_date, to_date)
-    if not _start(_run_worker, area, from_date, to_date, run_id):
+    if not _start(_run_worker, area, from_date, to_date, run_id, run_id=run_id):
         return jsonify({"error": "Εκτελείται ήδη αναζήτηση."}), 409
     return jsonify({"ok": True, "run_id": run_id})
 
@@ -159,8 +161,8 @@ def api_run():
 @app.post("/api/geocode/<run_id>")
 def api_geocode(run_id):
     _safe_run_dir(run_id)
-    if not _start(_geocode_worker, run_id,
-                  state="geocoding", result=_result_payload(run_id)):
+    if not _start(_geocode_worker, run_id, state="geocoding",
+                  result=_result_payload(run_id), run_id=run_id):
         return jsonify({"error": "Εκτελείται ήδη αναζήτηση."}), 409
     return jsonify({"ok": True})
 
@@ -194,6 +196,17 @@ def api_runs():
             runs.append(m)
     runs.sort(key=lambda m: m["mtime"], reverse=True)
     return jsonify(runs)
+
+
+@app.delete("/api/runs/<run_id>")
+def api_delete_run(run_id):
+    run_dir = _safe_run_dir(run_id)
+    with lock:
+        if job.state in ("running", "geocoding") and job.run_id == run_id:
+            return jsonify({"error": "Το run εκτελείται αυτή τη στιγμή."}), 409
+        shutil.rmtree(run_dir)
+        (RUNS_DIR / f"{run_id}.zip").unlink(missing_ok=True)
+    return jsonify({"ok": True})
 
 
 @app.get("/api/runs/<run_id>/rows")
