@@ -568,6 +568,9 @@ class TestWebUI(unittest.TestCase):
     def setUp(self):
         # φρέσκο ολοκληρωμένο run πριν από κάθε test (κάποια το διαγράφουν)
         from demolitions.output import write_xlsx
+        self.webui.rate_hits.clear()
+        self.webui.RATE_LIMIT_WINDOW_SECONDS = 60
+        self.webui.RATE_LIMIT_MAX_REQUESTS = 12
         d = self.webui.store.staging_dir(self.RID)
         (d / "pdf" / "Δήμος Χ" / "2021").mkdir(parents=True, exist_ok=True)
         (d / "pdf" / "Δήμος Χ" / "2021" / "ΑΔΑ1.pdf").write_bytes(b"%PDF-1.4 x")
@@ -630,6 +633,17 @@ class TestWebUI(unittest.TestCase):
         names = zipfile.ZipFile(io.BytesIO(r.data)).namelist()
         self.assertTrue(any(n.endswith(".xlsx") for n in names))
         self.assertTrue(any(n.endswith(".pdf") for n in names))
+
+    def test_zip_rate_limit(self):
+        self.webui.RATE_LIMIT_WINDOW_SECONDS = 3600
+        self.webui.RATE_LIMIT_MAX_REQUESTS = 1
+        r1 = self.client.get(self._url("/zip/<rid>.zip"),
+                             environ_base={"REMOTE_ADDR": "203.0.113.9"})
+        self.assertEqual(r1.status_code, 200)
+        r2 = self.client.get(self._url("/zip/<rid>.zip"),
+                             environ_base={"REMOTE_ADDR": "203.0.113.9"})
+        self.assertEqual(r2.status_code, 429)
+        self.assertIn("Retry-After", r2.headers)
 
     def test_run_validation(self):
         r = self.client.post("/api/run", json={

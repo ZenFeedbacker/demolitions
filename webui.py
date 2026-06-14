@@ -36,6 +36,12 @@ CACHE_DIR = Path(os.environ.get("DEMOLITIONS_CACHE_DIR", BASE / "cache"))
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 GITHUB_URL = "https://github.com/ZenFeedbacker/demolitions"
 START_TIME = time.time()
+RATE_LIMIT_WINDOW_SECONDS = int(
+    os.environ.get("DEMOLITIONS_RATE_LIMIT_WINDOW_SECONDS", "60")
+)
+RATE_LIMIT_MAX_REQUESTS = int(
+    os.environ.get("DEMOLITIONS_RATE_LIMIT_MAX_REQUESTS", "12")
+)
 
 app = Flask(__name__)
 store = make_storage()
@@ -62,6 +68,8 @@ class Job:
 
 job = Job()
 lock = threading.Lock()
+rate_lock = threading.Lock()
+rate_hits = {}
 
 
 def _slug(label, from_date, to_date):
@@ -76,6 +84,50 @@ def _result_payload(run_id):
     manifest["xlsx_url"] = f"/runs/{run_id}/{run_id}.xlsx"
     manifest["zip_url"] = f"/zip/{run_id}.zip"
     return manifest
+
+
+def _client_ip():
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",", 1)[0].strip()
+    return request.remote_addr or "unknown"
+
+
+def _check_rate_limit(action):
+    if RATE_LIMIT_MAX_REQUESTS <= 0 or RATE_LIMIT_WINDOW_SECONDS <= 0:
+        return None
+    now = time.time()
+    cutoff = now - RATE_LIMIT_WINDOW_SECONDS
+    key = (_client_ip(), action)
+    with rate_lock:
+        hits = [t for t in rate_hits.get(key, []) if t > cutoff]
+        if len(hits) >= RATE_LIMIT_MAX_REQUESTS:
+            rate_hits[key] = hits
+            retry_after = max(1, int(hits[0] + RATE_LIMIT_WINDOW_SECONDS - now))
+            return retry_after
+        hits.append(now)
+        rate_hits[key] = hits
+    return None
+
+
+@app.before_request
+def limit_expensive_routes():
+    action = {
+        "api_run": "run",
+        "api_geocode": "geocode",
+        "serve_zip": "zip",
+    }.get(request.endpoint)
+    if not action:
+        return None
+    retry_after = _check_rate_limit(action)
+    if retry_after is None:
+        return None
+    headers = {"Retry-After": str(retry_after)}
+    if request.endpoint == "serve_zip":
+        return Response("Rate limit exceeded.", status=429, headers=headers)
+    return jsonify({
+        "error": "Πάρα πολλά αιτήματα από την ίδια διεύθυνση. Δοκιμάστε ξανά σε λίγο."
+    }), 429, headers
 
 
 def _run_worker(j, area, from_date, to_date, run_id):
