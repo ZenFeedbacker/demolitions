@@ -369,6 +369,12 @@ class TestR2Storage(unittest.TestCase):
             self.assertEqual(b"".join(gen), b"xlsx-bytes")
             self.assertEqual(len(list(store.iter_pdfs("new"))), 3)
 
+            # free_local_pdfs: σβήνει τοπικά, το R2 μένει ανέπαφο
+            store.free_local_pdfs("new")
+            self.assertFalse((store.staging_dir("new") / "pdf").exists())
+            self.assertEqual(len(list(store.iter_pdfs("new"))), 3)
+            store.save_meta("new")   # ανέβασμα μόνο json/xlsx, χωρίς σφάλμα
+
             # cap=40: χωράει 1 run (39b), το παλιότερο χάνει τα PDF του
             store.enforce_pdf_cap()
             kept = {m["run_id"]: m.get("has_pdfs") for m in store.list_runs()}

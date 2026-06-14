@@ -81,7 +81,9 @@ def _run_worker(area, from_date, to_date, run_id):
         run_pipeline(area, from_date, to_date, staging, cache_dir=CACHE_DIR,
                      log=job.append, step=job.step,
                      cancel=job.cancel_event.is_set)
-        store.save_run(run_id)
+        job.append("Αποθήκευση αρχείων…")
+        store.save_run(run_id, progress=lambda i, n: job.step("upload", i, n))
+        store.free_local_pdfs(run_id)
         job.result = _result_payload(run_id)
         job.state = "geocoding"
         _geocode_worker(run_id, staging)
@@ -106,12 +108,12 @@ def _geocode_worker(run_id, staging=None):
             staging = store.prepare_staging(run_id)
         enrich_geocode(staging, cache_dir=CACHE_DIR, log=job.append,
                        step=job.step, cancel=job.cancel_event.is_set)
-        store.save_run(run_id)
+        store.save_meta(run_id)   # μόνο json/xlsx — τα PDF ανέβηκαν ήδη
         store.enforce_pdf_cap(log=job.append)
         job.result = _result_payload(run_id)
         job.state = "done"
     except CancelledRun:
-        store.save_run(run_id)   # τα μερικά αποτελέσματα σώζονται (geocoded=false)
+        store.save_meta(run_id)   # τα μερικά αποτελέσματα σώζονται (geocoded=false)
         job.append("Η γεωκωδικοποίηση ακυρώθηκε — οι μερικές συντεταγμένες σώθηκαν.")
         job.result = _result_payload(run_id)
         job.state = "done"

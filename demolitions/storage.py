@@ -70,8 +70,14 @@ class LocalStorage:
     def prepare_staging(self, run_id):
         return self.runs / run_id
 
-    def save_run(self, run_id):
+    def save_run(self, run_id, progress=None):
         pass  # ήδη γραμμένο στη θέση του
+
+    def save_meta(self, run_id):
+        pass  # τα json/xlsx είναι ήδη στον δίσκο
+
+    def free_local_pdfs(self, run_id):
+        pass  # τοπικά τα PDF ΕΙΝΑΙ η αποθήκη — δεν τα σβήνουμε
 
     def cleanup(self, run_id):
         pass
@@ -169,15 +175,36 @@ class R2Storage:
                                   str(d / name))
         return d
 
-    def save_run(self, run_id):
-        """Ανεβάζει όλο τον staging φάκελο στο R2 (overwrite)."""
+    META_FILES = ("rows.json", "run.json")
+
+    def _upload(self, run_id, rel):
+        self.s3.upload_file(
+            str(self.staging_dir(run_id) / rel), self.bucket,
+            self._key(run_id, rel),
+            ExtraArgs={"ContentType": content_type(rel)})
+
+    def save_run(self, run_id, progress=None):
+        """Ανεβάζει όλο τον staging φάκελο στο R2 (αρχικό ανέβασμα)."""
         d = self.staging_dir(run_id)
-        for p in d.rglob("*"):
-            if p.is_file():
-                rel = str(p.relative_to(d))
-                self.s3.upload_file(
-                    str(p), self.bucket, self._key(run_id, rel),
-                    ExtraArgs={"ContentType": content_type(rel)})
+        files = [str(p.relative_to(d)) for p in d.rglob("*") if p.is_file()]
+        for i, rel in enumerate(files, 1):
+            self._upload(run_id, rel)
+            if progress:
+                progress(i, len(files))
+
+    def save_meta(self, run_id):
+        """Ανεβάζει μόνο τα μικρά αρχεία (μετά τη γεωκωδικοποίηση) — όχι ξανά
+        τα PDF (αποφυγή διπλού ανεβάσματος δεκάδων MB)."""
+        d = self.staging_dir(run_id)
+        for rel in self.META_FILES + (run_id + ".xlsx",):
+            if (d / rel).is_file():
+                self._upload(run_id, rel)
+
+    def free_local_pdfs(self, run_id):
+        """Σβήνει τα τοπικά PDF του staging μετά το ανέβασμα (τα PDF είναι
+        ασφαλή στο R2)· μειώνει τη χρήση του εφήμερου δίσκου κατά τη
+        γεωκωδικοποίηση."""
+        shutil.rmtree(self.staging_dir(run_id) / "pdf", ignore_errors=True)
 
     def cleanup(self, run_id):
         shutil.rmtree(self._staging / run_id, ignore_errors=True)
