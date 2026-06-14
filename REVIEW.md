@@ -1,7 +1,9 @@
 # Reviewer orientation
 
-Context for someone reviewing this codebase. User-facing docs are in
-[README.md](README.md) (Greek); this file is the developer/reviewer brief.
+Context for someone reviewing this codebase. Technical docs are in
+[README.md](README.md); the non-technical user guide (instructions,
+methodology, assumptions) is in [ΟΔΗΓΟΣ.md](ΟΔΗΓΟΣ.md). This file is the
+developer/reviewer brief.
 
 ## What it is
 

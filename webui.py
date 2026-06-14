@@ -329,6 +329,23 @@ def api_delete_all():
     return jsonify({"ok": True, "deleted": deleted})
 
 
+@app.delete("/api/pdfs")
+def api_delete_all_pdfs():
+    """Καθαρίζει τα PDF όλων των run (κρατά μεταδεδομένα/xlsx) — ελευθερώνει χώρο."""
+    with lock:
+        active = job.run_id if job.state in ("running", "geocoding") else None
+    cleared = 0
+    for m in store.list_runs():
+        if m["run_id"] == active or not m.get("has_pdfs"):
+            continue
+        store.delete_pdfs(m["run_id"])
+        m.pop("_mtime", None)
+        m["has_pdfs"] = False
+        store.write_manifest(m["run_id"], m)
+        cleared += 1
+    return jsonify({"ok": True, "cleared": cleared})
+
+
 @app.delete("/api/runs/<run_id>")
 def api_delete_run(run_id):
     with lock:

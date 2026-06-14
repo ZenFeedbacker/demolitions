@@ -676,6 +676,16 @@ class TestWebUI(unittest.TestCase):
         self.assertGreaterEqual(r.get_json()["deleted"], 1)
         self.assertEqual(self.client.get("/api/runs").get_json(), [])
 
+    def test_delete_all_pdfs(self):
+        r = self.client.delete("/api/pdfs")
+        self.assertEqual(r.status_code, 200)
+        self.assertGreaterEqual(r.get_json()["cleared"], 1)
+        m = next(x for x in self.client.get("/api/runs").get_json()
+                 if x["run_id"] == self.RID)
+        self.assertFalse(m["has_pdfs"])           # PDF καθαρίστηκαν
+        self.assertEqual(m["pdf_bytes"], 0)
+        self.assertTrue(self.webui.store.exists(self.RID))   # το run μένει
+
     def test_rate_limit_blocks_after_max(self):
         w = self.webui
         with w.rate_lock:

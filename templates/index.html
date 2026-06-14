@@ -84,9 +84,11 @@
   .runcard .del:hover { background: #f8e8e4; }
   .runcard .cache { color: #9a5b2d; border-color: #e6cdb0; }
   .runcard .cache:hover { background: #f7ecdf; }
-  #histtools { margin-bottom: .6rem; }
+  #histtools { display: flex; gap: .5rem; margin-bottom: .6rem; }
   button.minor.danger { color: #a8231f; border-color: #e0c4bc; }
   button.minor.danger:hover { background: #f8e8e4; }
+  button#clearallpdfs { color: #9a5b2d; border-color: #e6cdb0; }
+  button#clearallpdfs:hover { background: #f7ecdf; }
   .tag { background: #e7f0e9; color: #2e6b46; border-radius: 4px; padding: .05rem .4rem;
           font-size: .75rem; }
   .tag.no { background: #f5e9e0; color: #9a5b2d; }
@@ -155,6 +157,7 @@
 
   <section id="panel-history" class="hidden">
     <div id="histtools" class="hidden">
+      <button class="minor" id="clearallpdfs">Καθαρισμός όλων των PDF</button>
       <button class="minor danger" id="clearall">Διαγραφή όλων</button>
     </div>
     <div id="histlist" class="runlist"></div>
@@ -290,6 +293,15 @@ $("clearall").addEventListener("click", async () => {
   try {
     if (!(await fetch("/api/runs", { method: "DELETE" })).ok) throw 0;
   } catch { alert("Σφάλμα διαγραφής"); }
+  loadHistory();
+});
+$("clearallpdfs").addEventListener("click", async () => {
+  if (!confirm("Καθαρισμός των PDF όλων των αναζητήσεων;\n\n" +
+               "Τα αποτελέσματα και τα Excel μένουν· ελευθερώνεται χώρος και " +
+               "τα zip θα ξαναφτιάχνονται κατ' απαίτηση από τη Διαύγεια.")) return;
+  try {
+    if (!(await fetch("/api/pdfs", { method: "DELETE" })).ok) throw 0;
+  } catch { alert("Σφάλμα"); }
   loadHistory();
 });
 
@@ -630,8 +642,10 @@ async function loadHistory() {
   let runs;
   try { runs = await (await fetch("/api/runs")).json(); }
   catch { list.innerHTML = `<div class="note">Αδυναμία φόρτωσης ιστορικού.</div>`; return; }
-  // «Διαγραφή όλων» μόνο όταν υπάρχουν αποθηκευμένα (μη ενεργά) run
+  // εργαλεία μαζικής διαχείρισης μόνο όταν υπάρχουν αποθηκευμένα (μη ενεργά) run
   $("histtools").classList.toggle("hidden", !runs.some(m => !m.active));
+  $("clearallpdfs").classList.toggle("hidden",
+    !runs.some(m => !m.active && m.has_pdfs && m.pdf_bytes));
   list.innerHTML = runs.length ? "" : `<div class="note">Δεν υπάρχουν αποθηκευμένα runs.</div>`;
   for (const m of runs) {
     const d = document.createElement("div");
@@ -736,8 +750,8 @@ async function loadAbout() {
       <li><b>Ιστορικό</b>: παλιότερες αναζητήσεις — άνοιγμα, λήψη ή διαγραφή.</li>
     </ol>
     <p class="note">Μετράει μόνο <b>τελικές</b> άδειες (όχι προεγκρίσεις/
-      αναθεωρήσεις). Λεπτομέρειες μεθοδολογίας στο
-      <a href="${a.github}#μεθοδολογία" target="_blank">README</a>.</p>
+      αναθεωρήσεις). Πλήρης μεθοδολογία & παραδοχές στον
+      <a href="${a.github}/blob/main/${encodeURIComponent("ΟΔΗΓΟΣ.md")}" target="_blank">Οδηγό χρήσης</a>.</p>
 
     <p class="note">
       Πηγαίος κώδικας: <a href="${a.github}" target="_blank">${a.github.replace("https://", "")}</a>
