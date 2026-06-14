@@ -23,7 +23,7 @@ from demolitions.egsa87 import egsa87_to_wgs84
 from demolitions.geocode import _poli_variants, _strip_dimos
 from demolitions.greek import dimos_display, greek_title, pretty_area
 from demolitions.output import COLUMNS, write_xlsx
-from demolitions.pdfparse import (_clean, detect_extent, detect_floors,
+from demolitions.pdfparse import (_clean, _pdf_url, detect_extent, detect_floors,
                                    extract_polygon, parse_fields)
 
 
@@ -274,6 +274,9 @@ class TestExtractPolygon(unittest.TestCase):
 
 
 class TestPdfText(unittest.TestCase):
+    def test_pdf_url_ignores_untrusted_document_url(self):
+        self.assertEqual(_pdf_url("ΑΔΑ123"), "https://diavgeia.gov.gr/doc/ΑΔΑ123")
+
     def test_missing_binary_returns_none(self):
         from unittest import mock
         from demolitions import pdfparse

@@ -42,6 +42,11 @@ WORD_NUM = {"ΕΝΟΣ": 1, "ΔΥΟ": 2, "ΤΡΙΩΝ": 3, "ΤΕΣΣΑΡΩΝ": 4,
             "ΠΕΝΤΕ": 5, "ΕΞΙ": 6}
 
 
+def _pdf_url(ada):
+    """Το PDF κατεβαίνει μόνο από το canonical doc endpoint της Διαύγειας."""
+    return f"https://diavgeia.gov.gr/doc/{ada}"
+
+
 def download_pdf(decision, cache_dir):
     """Επιστρέφει το path του PDF στην cache, ή None αν αποτύχει."""
     pdf_dir = Path(cache_dir) / "pdf"
@@ -49,8 +54,7 @@ def download_pdf(decision, cache_dir):
     path = pdf_dir / f"{decision['ada']}.pdf"
     if path.exists() and path.stat().st_size > 0:
         return path
-    # το search API συχνά γυρίζει κενό documentUrl· το URL προκύπτει από το ΑΔΑ
-    url = decision.get("documentUrl") or f"https://diavgeia.gov.gr/doc/{decision['ada']}"
+    url = _pdf_url(decision["ada"])
     for attempt in range(3):
         try:
             r = session.get(url, timeout=120)
