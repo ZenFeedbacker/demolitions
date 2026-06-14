@@ -100,6 +100,11 @@ def _check_rate_limit(action):
     cutoff = now - RATE_LIMIT_WINDOW_SECONDS
     key = (_client_ip(), action)
     with rate_lock:
+        # καθάρισε εγγραφές που έληξαν εντελώς ώστε το dict να μη μεγαλώνει
+        # απεριόριστα με IP που δεν ξαναεμφανίζονται
+        for k in [k for k, ts in rate_hits.items() if not ts or ts[-1] <= cutoff]:
+            if k != key:
+                del rate_hits[k]
         hits = [t for t in rate_hits.get(key, []) if t > cutoff]
         if len(hits) >= RATE_LIMIT_MAX_REQUESTS:
             rate_hits[key] = hits

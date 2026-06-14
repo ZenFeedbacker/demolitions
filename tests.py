@@ -669,6 +669,28 @@ class TestWebUI(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertFalse(self.webui.store.exists(self.RID))
 
+    def test_rate_limit_blocks_after_max(self):
+        w = self.webui
+        with w.rate_lock:
+            w.rate_hits.clear()
+        with w.app.test_request_context(environ_base={"REMOTE_ADDR": "7.7.7.7"}):
+            results = [w._check_rate_limit("zip")
+                       for _ in range(w.RATE_LIMIT_MAX_REQUESTS + 2)]
+        self.assertIsNone(results[0])
+        self.assertIsNotNone(results[-1])          # μπλοκάρεται μετά το όριο
+
+    def test_rate_limit_prunes_stale_keys(self):
+        w = self.webui
+        with w.rate_lock:
+            w.rate_hits.clear()
+            w.rate_hits[("1.1.1.1", "run")] = [0.0]   # έληξε (timestamp 0)
+            w.rate_hits[("2.2.2.2", "zip")] = []        # κενή
+        with w.app.test_request_context(environ_base={"REMOTE_ADDR": "9.9.9.9"}):
+            w._check_rate_limit("run")
+        self.assertNotIn(("1.1.1.1", "run"), w.rate_hits)
+        self.assertNotIn(("2.2.2.2", "zip"), w.rate_hits)
+        self.assertIn(("9.9.9.9", "run"), w.rate_hits)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
