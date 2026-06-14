@@ -1,34 +1,41 @@
 #!/usr/bin/env python3
-"""Τοπικό web UI για το εργαλείο κατεδαφίσεων.
+"""Web UI για το εργαλείο demolitions.
 
-Εκκίνηση:  python3 webui.py   (ανοίγει μόνο του τον browser)
+Τοπικά:  python3 webui.py   (ανοίγει μόνο του τον browser)
+Hosted:  gunicorn -w 1 --threads 8 --timeout 0 -b 0.0.0.0:$PORT webui:app
 
-Ένα run τη φορά, σε background thread· ο browser ρωτά την πρόοδο με
-polling (/api/status). Κάθε run αποθηκεύεται στο runs/<id>/ μαζί με
-run.json (μεταδεδομένα) και rows.json (για τον πίνακα και το ιστορικό).
+Ένα run τη φορά, σε background thread· ο browser ρωτά την πρόοδο με polling
+(/api/status). Τα run αποθηκεύονται μέσω του storage backend (τοπικός δίσκος
+ή Cloudflare R2 — βλ. demolitions/storage.py).
 """
 
 import json
-import shutil
+import os
 import socket
 import threading
 import traceback
 import webbrowser
 from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import quote
 
-from flask import Flask, abort, jsonify, render_template, request, send_from_directory
+from flask import Flask, Response, abort, jsonify, render_template, request
+
+from zipstream import ZipStream
 
 from demolitions.areas import AreaError, list_areas, normalize, resolve_area
+from demolitions.diavgeia import session as diavgeia_session
 from demolitions.greek import pretty_area
 from demolitions.pipeline import (CancelledRun, NoPermitsFound,
-                                   enrich_geocode, run_pipeline)
+                                  enrich_geocode, run_pipeline)
+from demolitions.storage import content_type, make_storage
 
 BASE = Path(__file__).parent
-RUNS_DIR = BASE / "runs"
-CACHE_DIR = BASE / "cache"
+CACHE_DIR = Path(os.environ.get("DEMOLITIONS_CACHE_DIR", BASE / "cache"))
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 app = Flask(__name__)
+store = make_storage()
 
 
 class Job:
@@ -60,15 +67,9 @@ def _slug(label, from_date, to_date):
     return f"{name}_{from_date}_{to_date}_{stamp}"
 
 
-def _zip_run(run_id):
-    job.append("Δημιουργία zip…")
-    shutil.make_archive(str(RUNS_DIR / run_id), "zip",
-                        root_dir=RUNS_DIR, base_dir=run_id)
-
-
 def _result_payload(run_id):
-    manifest = json.loads(
-        (RUNS_DIR / run_id / "run.json").read_text(encoding="utf-8"))
+    manifest = store.read_manifest(run_id)
+    manifest.pop("_mtime", None)
     manifest["xlsx_url"] = f"/runs/{run_id}/{run_id}.xlsx"
     manifest["zip_url"] = f"/zip/{run_id}.zip"
     return manifest
@@ -76,43 +77,50 @@ def _result_payload(run_id):
 
 def _run_worker(area, from_date, to_date, run_id):
     try:
-        run_pipeline(area, from_date, to_date, RUNS_DIR / run_id,
-                     cache_dir=CACHE_DIR, log=job.append, step=job.step,
+        staging = store.staging_dir(run_id)
+        run_pipeline(area, from_date, to_date, staging, cache_dir=CACHE_DIR,
+                     log=job.append, step=job.step,
                      cancel=job.cancel_event.is_set)
-        _zip_run(run_id)
+        store.save_run(run_id)
         job.result = _result_payload(run_id)
         job.state = "geocoding"
-        _geocode_worker(run_id)
+        _geocode_worker(run_id, staging)
     except CancelledRun:
         job.append("Ακυρώθηκε.")
         job.state = "cancelled"
+        store.cleanup(run_id)
     except (AreaError, NoPermitsFound) as e:
         job.error = str(e)
         job.state = "error"
+        store.cleanup(run_id)
     except Exception as e:
         job.append(traceback.format_exc())
         job.error = f"Σφάλμα: {e}"
         job.state = "error"
+        store.cleanup(run_id)
 
 
-def _geocode_worker(run_id):
+def _geocode_worker(run_id, staging=None):
     try:
-        enrich_geocode(RUNS_DIR / run_id, cache_dir=CACHE_DIR,
-                       log=job.append, step=job.step,
-                       cancel=job.cancel_event.is_set)
-        _zip_run(run_id)
+        if staging is None:                       # κρύα εκκίνηση (παλιό run)
+            staging = store.prepare_staging(run_id)
+        enrich_geocode(staging, cache_dir=CACHE_DIR, log=job.append,
+                       step=job.step, cancel=job.cancel_event.is_set)
+        store.save_run(run_id)
+        store.enforce_pdf_cap(log=job.append)
         job.result = _result_payload(run_id)
         job.state = "done"
     except CancelledRun:
-        # τα μερικά αποτελέσματα έχουν σωθεί (geocoded=false)
+        store.save_run(run_id)   # τα μερικά αποτελέσματα σώζονται (geocoded=false)
         job.append("Η γεωκωδικοποίηση ακυρώθηκε — οι μερικές συντεταγμένες σώθηκαν.")
-        _zip_run(run_id)
         job.result = _result_payload(run_id)
         job.state = "done"
     except Exception as e:
         job.append(traceback.format_exc())
         job.error = f"Σφάλμα γεωκωδικοποίησης: {e}"
         job.state = "error"
+    finally:
+        store.cleanup(run_id)
 
 
 def _start(target, *args, state="running", result=None, run_id=None, meta=None):
@@ -128,14 +136,6 @@ def _start(target, *args, state="running", result=None, run_id=None, meta=None):
         job.meta = meta or {}
         threading.Thread(target=target, args=args, daemon=True).start()
         return True
-
-
-def _safe_run_dir(run_id):
-    run_dir = (RUNS_DIR / run_id).resolve()
-    if not (run_dir.is_relative_to(RUNS_DIR.resolve())
-            and (run_dir / "run.json").exists()):
-        abort(404)
-    return run_dir
 
 
 @app.get("/")
@@ -174,7 +174,8 @@ def api_run():
 
 @app.post("/api/geocode/<run_id>")
 def api_geocode(run_id):
-    _safe_run_dir(run_id)
+    if not store.exists(run_id):
+        abort(404)
     if not _start(_geocode_worker, run_id, state="geocoding",
                   result=_result_payload(run_id), run_id=run_id):
         return jsonify({"error": "Εκτελείται ήδη αναζήτηση."}), 409
@@ -202,22 +203,16 @@ def api_cancel():
 
 @app.get("/api/runs")
 def api_runs():
-    runs = []
-    if RUNS_DIR.exists():
-        for manifest_path in RUNS_DIR.glob("*/run.json"):
-            m = _result_payload(manifest_path.parent.name)
-            m["mtime"] = manifest_path.stat().st_mtime
-            runs.append(m)
-    runs.sort(key=lambda m: m["mtime"], reverse=True)
-    # τρέχον job: σήμανση στην υπάρχουσα εγγραφή ή συνθετική αν δεν έχει
-    # γραφτεί ακόμη run.json (φάση αναζήτησης/PDF)
+    runs = store.list_runs()
+    for m in runs:
+        m.pop("_mtime", None)
     active_id = job.run_id if job.state in ("running", "geocoding") else None
     if active_id:
         for m in runs:
             if m["run_id"] == active_id:
                 m["active"] = job.state
                 break
-        else:
+        else:  # δεν έχει γραφτεί ακόμη run.json (φάση αναζήτησης/PDF)
             runs.insert(0, {"run_id": active_id, **job.meta, "n_rows": None,
                             "geocoded": False, "active": job.state,
                             "created": date.today().isoformat()})
@@ -227,33 +222,83 @@ def api_runs():
 
 @app.delete("/api/runs/<run_id>")
 def api_delete_run(run_id):
-    run_dir = _safe_run_dir(run_id)
     with lock:
         if job.state in ("running", "geocoding") and job.run_id == run_id:
             return jsonify({"error": "Το run εκτελείται αυτή τη στιγμή."}), 409
-        shutil.rmtree(run_dir)
-        (RUNS_DIR / f"{run_id}.zip").unlink(missing_ok=True)
+    if not store.exists(run_id):
+        abort(404)
+    store.delete_run(run_id)
     return jsonify({"ok": True})
 
 
 @app.get("/api/runs/<run_id>/rows")
 def api_rows(run_id):
-    return send_from_directory(_safe_run_dir(run_id), "rows.json")
+    member = store.open_member(run_id, "rows.json")
+    if not member:
+        abort(404)
+    gen, _ = member
+    return Response(gen, mimetype="application/json")
 
 
 @app.get("/runs/<run_id>/<path:filename>")
 def serve_run_file(run_id, filename):
-    return send_from_directory(_safe_run_dir(run_id), filename)
+    member = store.open_member(run_id, filename)
+    if not member:
+        abort(404)
+    gen, size = member
+    headers = {"Content-Length": str(size)}
+    if filename.endswith(".xlsx"):
+        headers["Content-Disposition"] = _attachment(filename.rsplit("/", 1)[-1])
+    return Response(gen, mimetype=content_type(filename), headers=headers)
+
+
+def _attachment(name):
+    """Content-Disposition με RFC 5987 (τα headers δέχονται μόνο latin-1)."""
+    return "attachment; filename*=UTF-8''" + quote(name)
+
+
+def _diavgeia_pdf(ada):
+    """Streamάρει το PDF μιας πράξης από τη Διαύγεια (για zip χωρίς cache)."""
+    url = f"https://diavgeia.gov.gr/doc/{ada}"
+    try:
+        with diavgeia_session.get(url, timeout=120, stream=True) as r:
+            if not r.ok:
+                return
+            for chunk in r.iter_content(65536):
+                yield chunk
+    except Exception:
+        return
 
 
 @app.get("/zip/<run_id>.zip")
 def serve_zip(run_id):
-    _safe_run_dir(run_id)
-    return send_from_directory(RUNS_DIR, f"{run_id}.zip")
+    if not store.exists(run_id):
+        abort(404)
+    manifest = store.read_manifest(run_id)
+    rows_member = store.open_member(run_id, "rows.json")
+    rows = json.loads(b"".join(rows_member[0])) if rows_member else []
+
+    zs = ZipStream()
+    xlsx = f"{run_id}.xlsx"
+    xm = store.open_member(run_id, xlsx)
+    if xm:
+        zs.add(data=xm[0], arcname=xlsx)
+    cached = manifest.get("has_pdfs")
+    for r in rows:
+        arc = r.get("pdf_path")
+        if not arc:
+            continue
+        if cached:                                  # από την αποθήκη (γρήγορο)
+            m = store.open_member(run_id, arc)
+            if m:
+                zs.add(data=m[0], arcname=arc)
+        else:                                        # κατ' απαίτηση από Διαύγεια
+            zs.add(data=_diavgeia_pdf(r["ada"]), arcname=arc)
+    return Response(zs, mimetype="application/zip",
+                    headers={"Content-Disposition": _attachment(f"{run_id}.zip")})
 
 
 def main():
-    RUNS_DIR.mkdir(exist_ok=True)
     port = None
     for p in range(8741, 8761):
         with socket.socket() as s:
@@ -264,7 +309,7 @@ def main():
             except OSError:
                 continue
     url = f"http://127.0.0.1:{port}/"
-    print(f"Κατεδαφίσεις web UI: {url}  (Ctrl-C για τερματισμό)")
+    print(f"demolitions web UI: {url}  (Ctrl-C για τερματισμό)")
     threading.Timer(1.0, webbrowser.open, [url]).start()
     app.run(host="127.0.0.1", port=port, threaded=True, debug=False)
 

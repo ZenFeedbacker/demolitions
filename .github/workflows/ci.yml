@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: |
+          pip install -r requirements.txt
+          pip install pyflakes "moto[s3]"
+      - name: Lint (pyflakes)
+        run: python3 -m pyflakes webui.py demolitions/*.py tests.py
+      - name: Tests
+        run: python3 tests.py
+      - name: Check page JS
+        run: |
+          python3 - <<'PY'
+          import re
+          html = open("templates/index.html", encoding="utf-8").read()
+          open("/tmp/ui.js", "w").write(re.findall(r"<script>(.*?)</script>", html, re.S)[-1])
+          PY
+          node --check /tmp/ui.js
+
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render deploy
+        run: curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"

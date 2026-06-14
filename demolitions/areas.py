@@ -66,13 +66,21 @@ def normalize(s):
 
 
 def load_kallikratis(cache_dir):
+    # προτιμάμε το πακεταρισμένο λεξικό (offline-first, για CI/cold start),
+    # μετά το cache, και τελευταία κατεβάζουμε από τη Διαύγεια
+    bundled = Path(__file__).parent / "data" / "kallikratis.json"
     path = Path(cache_dir) / "kallikratis.json"
-    if not path.exists():
+    if bundled.exists():
+        src = bundled
+    elif path.exists():
+        src = path
+    else:
         path.parent.mkdir(parents=True, exist_ok=True)
         r = requests.get(DICTIONARY_URL, timeout=30)
         r.raise_for_status()
         path.write_text(r.text, encoding="utf-8")
-    items = json.loads(path.read_text(encoding="utf-8"))["items"]
+        src = path
+    items = json.loads(src.read_text(encoding="utf-8"))["items"]
     regions = {i["uid"]: i["label"] for i in items if i["parent"] is None}
     munis = {i["uid"]: i["label"] for i in items if i["parent"] is not None}
     muni_region = {i["uid"]: i["parent"] for i in items if i["parent"] is not None}

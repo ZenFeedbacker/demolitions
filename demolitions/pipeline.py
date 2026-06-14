@@ -140,6 +140,7 @@ def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
         "n_rows": len(rows),
         "n_dups": n_dups,
         "geocoded": False,
+        "has_pdfs": any(r["pdf_path"] for r in rows),
     }
     _write_run_files(run_dir, rows, manifest)
     xlsx_path = run_dir / (run_dir.name + ".xlsx")

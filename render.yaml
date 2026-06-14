@@ -1,0 +1,21 @@
+# Render blueprint. Δημιουργία service: New > Blueprint, δείξε σε αυτό το repo.
+# Τα R2_* είναι μυστικά (sync:false) — όρισέ τα στο Render dashboard.
+services:
+  - type: web
+    name: demolitions
+    runtime: docker
+    plan: free
+    autoDeploy: false            # το deploy το οδηγεί το CI (GitHub Actions)
+    envVars:
+      - key: DEMOLITIONS_STORAGE
+        value: r2
+      - key: DEMOLITIONS_PDF_CACHE_LIMIT
+        value: "1000000000"      # 1 GB cache PDF· τα παλιότερα run χάνουν PDF
+      - key: R2_BUCKET
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false

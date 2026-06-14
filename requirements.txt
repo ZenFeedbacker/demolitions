@@ -1,3 +1,6 @@
 requests
 openpyxl
 flask
+gunicorn
+boto3
+zipstream-ng

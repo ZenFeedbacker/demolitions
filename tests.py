@@ -322,5 +322,65 @@ class TestRunsConsistency(unittest.TestCase):
                                     f"{run_dir.name}: λείπει {r['pdf_path']}")
 
 
+class TestR2Storage(unittest.TestCase):
+    """Έλεγχος του R2 backend με εικονικό S3 (moto), αν είναι διαθέσιμο."""
+
+    def setUp(self):
+        import importlib.util
+        if importlib.util.find_spec("moto") is None:
+            self.skipTest("moto δεν είναι εγκατεστημένο")
+
+    def _make_staging(self, store, run_id, n_pdfs, pdf_bytes=b"%PDF-1.4 test"):
+        d = store.staging_dir(run_id)
+        rows = []
+        for i in range(n_pdfs):
+            rel = f"pdf/Δήμος Χ/2021/ΑΔΑ{i}.pdf"
+            p = d / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(pdf_bytes)
+            rows.append({"ada": f"ΑΔΑ{i}", "pdf_path": rel})
+        (d / "rows.json").write_text(json.dumps(rows, ensure_ascii=False), "utf-8")
+        (d / (run_id + ".xlsx")).write_bytes(b"xlsx-bytes")
+        (d / "run.json").write_text(json.dumps(
+            {"run_id": run_id, "n_rows": n_pdfs, "has_pdfs": True}), "utf-8")
+
+    def test_roundtrip_and_eviction(self):
+        from moto import mock_aws
+        with mock_aws():
+            import boto3
+            boto3.client("s3", region_name="us-east-1").create_bucket(Bucket="demo-test-bucket")
+            import os
+            os.environ.update(R2_BUCKET="demo-test-bucket", R2_ACCOUNT_ID="acc",
+                              R2_ACCESS_KEY_ID="k", R2_SECRET_ACCESS_KEY="s")
+            from demolitions.storage import R2Storage
+            store = R2Storage("demo-test-bucket", "acc", "k", "s", pdf_cap=40,
+                              endpoint_url="https://s3.amazonaws.com")
+
+            # δύο run, 3 PDF το καθένα (13 bytes -> 39 bytes/run)
+            self._make_staging(store, "old", 3)
+            store.save_run("old")
+            self._make_staging(store, "new", 3)
+            store.save_run("new")
+
+            self.assertTrue(store.exists("new"))
+            self.assertEqual(len(store.list_runs()), 2)
+            # ανάγνωση member
+            gen, size = store.open_member("new", "new.xlsx")
+            self.assertEqual(b"".join(gen), b"xlsx-bytes")
+            self.assertEqual(len(list(store.iter_pdfs("new"))), 3)
+
+            # cap=40: χωράει 1 run (39b), το παλιότερο χάνει τα PDF του
+            store.enforce_pdf_cap()
+            kept = {m["run_id"]: m.get("has_pdfs") for m in store.list_runs()}
+            self.assertEqual(kept["new"], True)
+            self.assertEqual(kept["old"], False)
+            self.assertEqual(len(list(store.iter_pdfs("old"))), 0)
+            # μεταδεδομένα του old παραμένουν
+            self.assertEqual(store.read_manifest("old")["n_rows"], 3)
+
+            store.delete_run("new")
+            self.assertFalse(store.exists("new"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

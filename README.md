@@ -1,4 +1,4 @@
-# κατεδαφίσεις
+# demolitions (κατεδαφίσεις)
 
 Εργαλείο έρευνας για τη χαρτογράφηση των αδειών κατεδάφισης στην Ελλάδα
 (στο πνεύμα του [«Ο διαρκής θάνατος της μονοκατοικίας»](https://www.kathimerini.gr/investigations/563435530/o-diarkis-thanatos-tis-monokatoikias/)).
@@ -61,6 +61,35 @@ python3 -m demolitions --area "Ελλάδα" --from 01/01/2023 --to 31/12/2023 -
 ```
 
 Ημερομηνίες σε μορφή ΗΗ/ΜΜ/ΕΕΕΕ (δεκτή και η ΕΕΕΕ-ΜΜ-ΗΗ).
+
+## Δημόσια εγκατάσταση (δωρεάν: Render + Cloudflare R2)
+
+Το app τρέχει σε container (χρειάζεται το `pdftotext`) και κρατά το ιστορικό
+των run σε αποθήκη εκτός του (εφήμερου) δίσκου του host.
+
+1. **Cloudflare R2** (δωρεάν 10 GB): φτιάξε ένα bucket και ένα API token
+   (Access Key + Secret). Σημείωσε το Account ID.
+2. **Render**: New → Blueprint, δείξε στο GitHub repo (διαβάζει το
+   `render.yaml`). Στο dashboard όρισε τα μυστικά:
+   `R2_BUCKET`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`.
+   Πάρε το **Deploy Hook URL** του service.
+3. **GitHub**: στο repo → Settings → Secrets → Actions, πρόσθεσε
+   `RENDER_DEPLOY_HOOK_URL`. Από εκεί και πέρα κάθε push στο `main` τρέχει
+   τα tests και, αν περάσουν, αναπτύσσει αυτόματα (βλ. `.github/workflows/ci.yml`).
+
+Στο hosted περιβάλλον τα PDF αποθηκεύονται στο R2 μόνο για τα **πιο πρόσφατα**
+run· μόλις το σύνολό τους ξεπεράσει το `DEMOLITIONS_PDF_CACHE_LIMIT`
+(default 1 GB) σβήνονται τα PDF των παλαιότερων run (τα μεταδεδομένα μένουν,
+και το zip τους ξαναφτιάχνεται κατ' απαίτηση από τη Διαύγεια). Η δωρεάν
+βαθμίδα του Render «κοιμάται» μετά από 15′ αδράνειας — η πρώτη επίσκεψη μετά
+αργεί ~1′. Ρυθμίσεις μέσω env: `DEMOLITIONS_STORAGE` (`local`|`r2`),
+`DEMOLITIONS_PDF_CACHE_LIMIT`, `DEMOLITIONS_CACHE_DIR`.
+
+## Tests
+
+```sh
+python3 tests.py          # offline· χρειάζεται «pip install moto» για το R2 test
+```
 
 Κάθε run παράγει έναν φάκελο:
 

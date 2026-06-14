@@ -1,0 +1,11 @@
+.git
+__pycache__
+*.pyc
+*.pyo
+cache/
+runs/
+*.xlsx
+*.zip
+/δράμα*/
+/σύγκριση*/
+.venv
