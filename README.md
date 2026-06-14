@@ -54,10 +54,10 @@ autocomplete, διάστημα ημερομηνιών, ζωντανή πρόοδ
 ## Εκτέλεση — γραμμή εντολών
 
 ```sh
-python3 katedafiseis.py --area "Δήμος Δράμας" --from 01/01/2021 --to 31/12/2021 -o drama
-python3 katedafiseis.py --area "Νομός Καβάλας" --from 01/01/2019 -o kavala
-python3 katedafiseis.py --area "Περιφέρεια Κρήτης" --from 01/01/2024 -o kriti
-python3 katedafiseis.py --area "Ελλάδα" --from 01/01/2023 --to 31/12/2023 --no-geocode -o ellada2023
+python3 -m demolitions --area "Δήμος Δράμας" --from 01/01/2021 --to 31/12/2021 -o drama
+python3 -m demolitions --area "Νομός Καβάλας" --from 01/01/2019 -o kavala
+python3 -m demolitions --area "Περιφέρεια Κρήτης" --from 01/01/2024 -o kriti
+python3 -m demolitions --area "Ελλάδα" --from 01/01/2023 --to 31/12/2023 --no-geocode -o ellada2023
 ```
 
 Ημερομηνίες σε μορφή ΗΗ/ΜΜ/ΕΕΕΕ (δεκτή και η ΕΕΕΕ-ΜΜ-ΗΗ).

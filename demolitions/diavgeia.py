@@ -40,7 +40,7 @@ def permit_kind(subject):
     return None
 
 session = requests.Session()
-session.headers["User-Agent"] = "katedafiseis-research/1.0 (ffeizidis@grnet.gr)"
+session.headers["User-Agent"] = "demolitions-research/1.0 (ffeizidis@grnet.gr)"
 
 
 def _windows(start, end):

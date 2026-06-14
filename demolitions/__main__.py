@@ -2,7 +2,7 @@
 """Χαρτογράφηση αδειών κατεδάφισης από τη Διαύγεια.
 
 Παράδειγμα:
-    python3 katedafiseis.py --area "Δήμος Δράμας" --from 2021-01-01 --to 2021-12-31 -o drama
+    python3 -m demolitions --area "Δήμος Δράμας" --from 01/01/2021 --to 31/12/2021 -o drama
 """
 
 import argparse
@@ -10,9 +10,9 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
-from katedafiseis.areas import AreaError
-from katedafiseis.pipeline import (E_ADEIES_START, NoPermitsFound,
-                                   enrich_geocode, run_pipeline)
+from demolitions.areas import AreaError
+from demolitions.pipeline import (E_ADEIES_START, NoPermitsFound,
+                                  enrich_geocode, run_pipeline)
 
 
 def parse_date(s):
@@ -38,11 +38,12 @@ def parse_args():
                    help="από ημερομηνία (ΗΗ/ΜΜ/ΕΕΕΕ, default 01/10/2018)")
     p.add_argument("--to", dest="to_date", type=parse_date,
                    default=date.today(), help="έως ημερομηνία (default σήμερα)")
-    p.add_argument("-o", "--output", default="katedafiseis",
+    p.add_argument("-o", "--output", default="demolitions",
                    help="φάκελος εξόδου του run (θα περιέχει το .xlsx και pdf/)")
     p.add_argument("--no-geocode", action="store_true",
                    help="χωρίς συντεταγμένες (πιο γρήγορο)")
-    p.add_argument("--cache-dir", default=str(Path(__file__).parent / "cache"))
+    p.add_argument("--cache-dir",
+                   default=str(Path(__file__).parent.parent / "cache"))
     return p.parse_args()
 
 

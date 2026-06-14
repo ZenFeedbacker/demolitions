@@ -16,7 +16,7 @@ import requests
 from .areas import normalize
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
-USER_AGENT = "katedafiseis-research/1.0 (ffeizidis@grnet.gr)"
+USER_AGENT = "demolitions-research/1.0 (ffeizidis@grnet.gr)"
 # λογικά όρια Ελλάδας για απόρριψη άσχετων αποτελεσμάτων
 LAT_RANGE = (34.5, 42.0)
 LON_RANGE = (19.0, 30.1)

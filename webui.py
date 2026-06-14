@@ -19,9 +19,9 @@ from pathlib import Path
 
 from flask import Flask, abort, jsonify, render_template, request, send_from_directory
 
-from katedafiseis.areas import AreaError, list_areas, normalize, resolve_area
-from katedafiseis.greek import pretty_area
-from katedafiseis.pipeline import (CancelledRun, NoPermitsFound,
+from demolitions.areas import AreaError, list_areas, normalize, resolve_area
+from demolitions.greek import pretty_area
+from demolitions.pipeline import (CancelledRun, NoPermitsFound,
                                    enrich_geocode, run_pipeline)
 
 BASE = Path(__file__).parent

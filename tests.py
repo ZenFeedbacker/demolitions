@@ -11,13 +11,13 @@ from pathlib import Path
 
 CACHE = str(Path(__file__).parent / "cache")
 
-from katedafiseis.areas import AreaError, list_areas, normalize, resolve_area
-from katedafiseis.diavgeia import KIND_KATEDAFISI, KIND_OIKODOMIKI, permit_kind
-from katedafiseis.egsa87 import egsa87_to_wgs84
-from katedafiseis.geocode import _poli_variants, _strip_dimos
-from katedafiseis.greek import dimos_display, greek_title, pretty_area
-from katedafiseis.output import COLUMNS, write_xlsx
-from katedafiseis.pdfparse import (_clean, detect_extent, detect_floors,
+from demolitions.areas import AreaError, list_areas, normalize, resolve_area
+from demolitions.diavgeia import KIND_KATEDAFISI, KIND_OIKODOMIKI, permit_kind
+from demolitions.egsa87 import egsa87_to_wgs84
+from demolitions.geocode import _poli_variants, _strip_dimos
+from demolitions.greek import dimos_display, greek_title, pretty_area
+from demolitions.output import COLUMNS, write_xlsx
+from demolitions.pdfparse import (_clean, detect_extent, detect_floors,
                                    extract_polygon, parse_fields)
 
 
