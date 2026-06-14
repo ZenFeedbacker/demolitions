@@ -1,3 +1,5 @@
+<img src="static/icon.png" alt="" width="72" align="right">
+
 # demolitions (κατεδαφίσεις)
 
 Εργαλείο έρευνας για τη χαρτογράφηση των αδειών κατεδάφισης στην Ελλάδα
