@@ -1,8 +1,8 @@
 """Γεωκωδικοποίηση διευθύνσεων με Nominatim (OpenStreetMap).
 
-Κλιμακωτή ακρίβεια: οδός+αριθμός -> οδός -> οικισμός -> δήμος. Όλα τα
-αποτελέσματα (και οι αποτυχίες) κρατιούνται σε cache ώστε επαναλήψεις να
-μην ξαναχτυπούν το API (όριο ~1 αίτημα/δευτερόλεπτο).
+Κλιμακωτή ακρίβεια: οδός+αριθμός -> οδός -> οικισμός -> δήμος. Τα θετικά
+αποτελέσματα και τα οριστικά «δεν βρέθηκε» κρατιούνται σε cache ώστε
+επαναλήψεις να μην ξαναχτυπούν το API (όριο ~1 αίτημα/δευτερόλεπτο).
 """
 
 import json
@@ -63,7 +63,14 @@ class Geocoder:
         self.cache_path = Path(cache_dir) / "geocode.json"
         self.cache = {}
         if self.cache_path.exists():
-            self.cache = json.loads(self.cache_path.read_text(encoding="utf-8"))
+            raw = json.loads(self.cache_path.read_text(encoding="utf-8"))
+            # παλιό format: q -> [lat, lon] / None. Τα legacy None μπορεί να
+            # κρύβουν παροδικές αστοχίες, οπότε τα ξαναδοκιμάζουμε.
+            for q, value in raw.items():
+                if isinstance(value, list):
+                    self.cache[q] = {"status": "hit", "result": value}
+                elif isinstance(value, dict) and value.get("status") in ("hit", "miss"):
+                    self.cache[q] = value
         self._dirty = 0
 
     def _save(self):
@@ -72,17 +79,35 @@ class Geocoder:
         )
         self._dirty = 0
 
+    def _cache_get(self, q):
+        cached = self.cache.get(q)
+        if not cached:
+            return None, False
+        return cached.get("result"), True
+
+    def _cache_put(self, q, result, *, status):
+        self.cache[q] = {"status": status, "result": result}
+        self._dirty += 1
+        if self._dirty >= 20:
+            self._save()
+
     def _query(self, q):
-        if q in self.cache:
-            return self.cache[q]
-        result = None
-        try:
-            r = session.get(
-                NOMINATIM_URL,
-                params={"q": q, "format": "jsonv2", "limit": 1,
-                        "countrycodes": "gr"},
-                timeout=30,
-            )
+        cached, found = self._cache_get(q)
+        if found:
+            return cached
+        for attempt in range(4):
+            try:
+                r = session.get(
+                    NOMINATIM_URL,
+                    params={"q": q, "format": "jsonv2", "limit": 1,
+                            "countrycodes": "gr"},
+                    timeout=30,
+                )
+            except requests.RequestException:
+                if attempt == 3:
+                    return None
+                time.sleep(2 ** attempt)
+                continue
             time.sleep(1.1)
             if r.ok:
                 hits = r.json()
@@ -91,13 +116,17 @@ class Geocoder:
                     if LAT_RANGE[0] <= lat <= LAT_RANGE[1] and \
                        LON_RANGE[0] <= lon <= LON_RANGE[1]:
                         result = [lat, lon]
-        except requests.RequestException:
-            pass
-        self.cache[q] = result
-        self._dirty += 1
-        if self._dirty >= 20:
-            self._save()
-        return result
+                        self._cache_put(q, result, status="hit")
+                        return result
+                self._cache_put(q, None, status="miss")
+                return None
+            if r.status_code in (429, 500, 502, 503, 504):
+                if attempt == 3:
+                    return None
+                time.sleep(2 ** attempt)
+                continue
+            return None
+        return None
 
     def geocode_row(self, row, dimos_label):
         """Επιστρέφει (lat, lon, precision) ή (None, None, '')."""

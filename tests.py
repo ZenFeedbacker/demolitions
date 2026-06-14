@@ -292,6 +292,32 @@ class TestGeocodeHelpers(unittest.TestCase):
         self.assertEqual(_poli_variants("Δράμα", "Δράμας"), ["Δράμα"])
         self.assertEqual(_poli_variants("", "Δράμας"), [])
 
+    def test_transient_failures_do_not_become_cached_misses(self):
+        from unittest import mock
+        from demolitions import geocode
+        with tempfile.TemporaryDirectory() as tmp:
+            g = geocode.Geocoder(tmp)
+            with mock.patch.object(geocode.session, "get",
+                                   side_effect=geocode.requests.RequestException), \
+                 mock.patch.object(geocode.time, "sleep"):
+                self.assertIsNone(g._query("Δράμα, Ελλάδα"))
+                self.assertIsNone(g._query("Δράμα, Ελλάδα"))
+            self.assertEqual(g.cache, {})
+
+    def test_empty_hits_cache_are_reused(self):
+        from unittest import mock
+        from demolitions import geocode
+        fake = mock.Mock(ok=True)
+        fake.json.return_value = []
+        with tempfile.TemporaryDirectory() as tmp:
+            g = geocode.Geocoder(tmp)
+            with mock.patch.object(geocode.session, "get", return_value=fake) as get, \
+                 mock.patch.object(geocode.time, "sleep"):
+                self.assertIsNone(g._query("Άγνωστο μέρος, Ελλάδα"))
+                self.assertIsNone(g._query("Άγνωστο μέρος, Ελλάδα"))
+            self.assertEqual(get.call_count, 1)
+            self.assertEqual(g.cache["Άγνωστο μέρος, Ελλάδα"]["status"], "miss")
+
 
 class TestOutput(unittest.TestCase):
     def test_xlsx(self):
