@@ -15,10 +15,10 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from .areas import normalize, resolve_area
+from .areas import municipality_labels, normalize, resolve_area
 from .diavgeia import KIND_KATEDAFISI, issue_date, permit_kind, search_permits
 from .geocode import Geocoder
-from .greek import dimos_display, pretty_area
+from .greek import pretty_area
 from .output import write_xlsx
 from .pdfparse import parse_decision
 
@@ -63,6 +63,7 @@ def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
         from_date = E_ADEIES_START
 
     area_label, munis = resolve_area(area, cache_dir)
+    muni_labels = municipality_labels(munis, cache_dir)
     area_label = pretty_area(area_label)
     log(f"Περιοχή: {area_label} ({len(munis)} δήμοι)")
     log(f"Διάστημα: {from_date:%d/%m/%Y} – {to_date:%d/%m/%Y}")
@@ -89,13 +90,16 @@ def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
             step("pdf", i, len(decisions))
         row = parse_decision(d, cache_dir)
         dt = issue_date(d)
+        muni_code = d["extraFieldValues"]["municipality"]
         row["date"] = dt.isoformat()
         row["year"] = dt.year
-        row["dimos"] = dimos_display(munis[d["extraFieldValues"]["municipality"]])
+        row["muni_code"] = muni_code
+        row["dimos"] = muni_labels[muni_code]["display"]
+        row["dimos_query"] = muni_labels[muni_code]["geocode"]
         row["eidos"] = permit_kind(d.get("subject", "")) or KIND_KATEDAFISI
         row["flags"] = ""
         # ίδιο κτίσμα με >1 τελικές άδειες (επανεκδόσεις) — συχνό φαινόμενο
-        key = (d["extraFieldValues"]["municipality"],
+        key = (muni_code,
                normalize(row["perigrafi"]), normalize(row["odos"]),
                row["ar_apo"])
         if row["perigrafi"] and key in seen_building:

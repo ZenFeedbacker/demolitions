@@ -87,6 +87,27 @@ def load_kallikratis(cache_dir):
     return regions, munis, muni_region
 
 
+def municipality_labels(muni_codes, cache_dir):
+    """Display/geocode labels ανά κωδικό δήμου, με διάκριση ομώνυμων."""
+    from .greek import dimos_display, greek_title  # εδώ λόγω κυκλικού import
+
+    regions, munis, muni_region = load_kallikratis(cache_dir)
+    dups = {l for l, n in Counter(munis.values()).items() if n > 1}
+    out = {}
+    for code in muni_codes:
+        label = munis[code]
+        display = dimos_display(label)
+        geocode = display
+        if label in dups:
+            region = greek_title(
+                regions[muni_region[code]].removeprefix("ΠΕΡΙΦΕΡΕΙΑ ").strip()
+            )
+            display += f" ({region})"
+            geocode = f"{geocode} {region}"
+        out[code] = {"display": display, "geocode": geocode}
+    return out
+
+
 def resolve_area(area, cache_dir):
     """Επιστρέφει (περιγραφή, {κωδικός: όνομα δήμου}) για το ζητούμενο --area.
 
@@ -189,7 +210,7 @@ def list_areas(cache_dir):
     Κάθε εγγραφή: {label, norm, type}· το label περνά αυτούσιο στο
     resolve_area, το norm είναι για φιλτράρισμα χωρίς τόνους/πεζά.
     """
-    from .greek import dimos_display, greek_title  # εδώ λόγω κυκλικού import
+    from .greek import greek_title  # εδώ λόγω κυκλικού import
 
     regions, munis, muni_region = load_kallikratis(cache_dir)
     multi_pe = {p for prefixes in NOMOS_PREFIXES.values() for p in prefixes}
@@ -203,14 +224,9 @@ def list_areas(cache_dir):
         # ταυτόσημες με τον παλιό νομό
         kind = "ΠΕ " if prefix in multi_pe else "Νομός "
         areas.append({"label": greek_title(kind + name), "type": "νομός/ΠΕ"})
-    # ομώνυμοι δήμοι (Ηρακλείου Κρήτης/Αττικής) ξεχωρίζουν με την περιφέρεια
-    dups = {l for l, n in Counter(munis.values()).items() if n > 1}
+    labels = municipality_labels(munis, cache_dir)
     for code, label in sorted(munis.items(), key=lambda kv: kv[1]):
-        disp = dimos_display(label)
-        if label in dups:
-            region = regions[muni_region[code]].removeprefix("ΠΕΡΙΦΕΡΕΙΑ ")
-            disp += f" ({greek_title(region)})"
-        areas.append({"label": disp, "type": "δήμος"})
+        areas.append({"label": labels[code]["display"], "type": "δήμος"})
     for a in areas:
         a["norm"] = normalize(a["label"])
     return areas

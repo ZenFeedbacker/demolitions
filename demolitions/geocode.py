@@ -27,7 +27,9 @@ session.headers["User-Agent"] = USER_AGENT
 
 def _strip_dimos(label):
     """«Δήμος Δράμας»/«ΔΗΜΟΣ ΔΡΑΜΑΣ» -> «Δράμας»."""
-    return re.sub(r"^(ΔΗΜΟΣ|Δήμος)\s+", "", label).title()
+    label = re.sub(r"^(ΔΗΜΟΣ|Δήμος)\s+", "", label)
+    label = re.sub(r"\s*\([^)]+\)\s*$", "", label)
+    return label.title()
 
 
 def _poli_variants(poli, dimos):
@@ -135,8 +137,8 @@ class Geocoder:
         """
         if not row.get("lat"):
             return None
-        dimos = _strip_dimos(dimos_label)
-        hit = self._query(f"Δήμος {dimos}, Ελλάδα")
+        query = row.get("dimos_query") or f"Δήμος {_strip_dimos(dimos_label)}"
+        hit = self._query(f"{query}, Ελλάδα")
         if not hit:
             return None
         la1, lo1, la2, lo2 = map(math.radians,

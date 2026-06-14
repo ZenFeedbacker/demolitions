@@ -14,7 +14,8 @@ from pathlib import Path
 
 CACHE = str(Path(__file__).parent / "cache")
 
-from demolitions.areas import AreaError, list_areas, normalize, resolve_area
+from demolitions.areas import (AreaError, list_areas, municipality_labels,
+                               normalize, resolve_area)
 from demolitions.diavgeia import (KIND_KATEDAFISI, KIND_OIKODOMIKI,
                                   _search_query, permit_kind)
 from demolitions.egsa87 import egsa87_to_wgs84
@@ -78,6 +79,13 @@ class TestResolveArea(unittest.TestCase):
         for a in list_areas(CACHE):
             label, munis = resolve_area(a["label"], CACHE)
             self.assertTrue(munis, f"κενή επίλυση: {a['label']}")
+
+    def test_omonimoi_dimoi_exoun_diaforetikes_etiketes(self):
+        labels = municipality_labels(("4604", "7101"), CACHE)
+        self.assertEqual(labels["4604"]["display"], "Δήμος Ηρακλείου (Αττικής)")
+        self.assertEqual(labels["7101"]["display"], "Δήμος Ηρακλείου (Κρήτης)")
+        self.assertEqual(labels["4604"]["geocode"], "Δήμος Ηρακλείου Αττικής")
+        self.assertEqual(labels["7101"]["geocode"], "Δήμος Ηρακλείου Κρήτης")
 
 
 class TestGreek(unittest.TestCase):
@@ -274,6 +282,7 @@ class TestGeocodeHelpers(unittest.TestCase):
     def test_strip_dimos(self):
         self.assertEqual(_strip_dimos("Δήμος Δράμας"), "Δράμας")
         self.assertEqual(_strip_dimos("ΔΗΜΟΣ ΔΡΑΜΑΣ"), "Δραμας")
+        self.assertEqual(_strip_dimos("Δήμος Ηρακλείου (Αττικής)"), "Ηρακλείου")
 
     def test_poli_variants(self):
         self.assertEqual(_poli_variants("Οικισμός Ποταμιας Θάσου", "Θάσου"),
