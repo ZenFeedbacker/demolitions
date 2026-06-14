@@ -233,6 +233,31 @@ class TestExtractPolygon(unittest.TestCase):
     def test_xoris_pedio(self):
         self.assertIsNone(extract_polygon("Άλλο κείμενο χωρίς συντεταγμένες"))
 
+    def test_long_polygon(self):
+        # 15 κορυφές, μία ανά γραμμή — δεν πρέπει να κόβονται (παλιό όριο: 7)
+        pairs = [f"{512800 + i}.0 {4555300 + i}.0" for i in range(15)]
+        text = ("Συντεταγμένες   " + pairs[0] + ",\n"
+                + "".join(f"                {p},\n" for p in pairs[1:-1])
+                + f"                {pairs[-1]}\n\n            Σελίδα 3 από 4\n")
+        poly = extract_polygon(text)
+        self.assertEqual(len(poly), 15)
+
+
+class TestPdfText(unittest.TestCase):
+    def test_missing_binary_returns_none(self):
+        from unittest import mock
+        from demolitions import pdfparse
+        with mock.patch.object(pdfparse.subprocess, "run",
+                               side_effect=FileNotFoundError):
+            self.assertIsNone(pdfparse.pdf_text("/nonexistent.pdf"))
+
+    def test_nonzero_exit_returns_none(self):
+        from unittest import mock
+        from demolitions import pdfparse
+        fake = mock.Mock(returncode=1, stdout=b"")
+        with mock.patch.object(pdfparse.subprocess, "run", return_value=fake):
+            self.assertIsNone(pdfparse.pdf_text("/x.pdf"))
+
 
 class TestGeocodeHelpers(unittest.TestCase):
     def test_strip_dimos(self):
@@ -479,6 +504,11 @@ class TestWebUI(unittest.TestCase):
         self.assertIn(b"tab-about", r.data)
         self.assertIn(b'value="2018-10-01"', r.data)   # default «Από»
         self.assertGreater(len(self.client.get("/api/areas").get_json()), 300)
+
+    def test_healthz(self):
+        r = self.client.get("/healthz")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data, b"ok")
 
     def test_about(self):
         a = self.client.get("/api/about").get_json()

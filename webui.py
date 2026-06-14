@@ -146,6 +146,11 @@ def _start(target, *args, state="running", result=None, run_id=None, meta=None):
         return True
 
 
+@app.get("/healthz")
+def healthz():
+    return "ok", 200
+
+
 @app.get("/")
 def index():
     return render_template("index.html", today=date.today().isoformat(),

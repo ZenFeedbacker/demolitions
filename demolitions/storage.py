@@ -208,9 +208,14 @@ class R2Storage:
             ExtraArgs={"ContentType": content_type(rel)})
 
     def save_run(self, run_id, progress=None):
-        """Ανεβάζει όλο τον staging φάκελο στο R2 (αρχικό ανέβασμα)."""
+        """Ανεβάζει όλο τον staging φάκελο στο R2 (αρχικό ανέβασμα).
+
+        Το run.json ανεβαίνει ΤΕΛΕΥΤΑΙΟ: ένα run "εμφανίζεται" στο ιστορικό
+        (list_runs ψάχνει run.json) μόνο αφού έχουν ανέβει όλα τα υπόλοιπα,
+        ώστε μια αποτυχία στη μέση να μη δείχνει ημιτελές run."""
         d = self.staging_dir(run_id)
         files = [str(p.relative_to(d)) for p in d.rglob("*") if p.is_file()]
+        files.sort(key=lambda rel: rel == "run.json")   # run.json -> τελευταίο
         for i, rel in enumerate(files, 1):
             self._upload(run_id, rel)
             if progress:

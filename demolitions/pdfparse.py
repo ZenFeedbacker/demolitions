@@ -67,10 +67,14 @@ def download_pdf(decision, cache_dir):
 
 
 def pdf_text(path):
-    out = subprocess.run(
-        ["pdftotext", "-layout", str(path), "-"],
-        capture_output=True, timeout=60,
-    )
+    """Κείμενο του PDF μέσω pdftotext, ή None αν λείπει το poppler/αποτύχει."""
+    try:
+        out = subprocess.run(
+            ["pdftotext", "-layout", str(path), "-"],
+            capture_output=True, timeout=60,
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        return None
     if out.returncode != 0:
         return None
     return out.stdout.decode("utf-8", errors="replace")
@@ -112,7 +116,9 @@ def extract_polygon(text):
     if not m:
         return None
     chunk = m.group(1)
-    for line in text[m.end():].splitlines()[1:8]:
+    # οι κορυφές συνεχίζονται σε γραμμές με βαθιά εσοχή· σταματάμε στην πρώτη
+    # μη-αριθμητική (όριο ασφαλείας ώστε να μην σαρώνουμε όλο το έγγραφο)
+    for line in text[m.end():].splitlines()[1:60]:
         if re.match(r"^\s{8,}[\d.,\s]+$", line) and re.search(r"\d{6,}", line):
             chunk += " " + line.strip()
         else:

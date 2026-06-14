@@ -285,7 +285,9 @@ function startPolling() {
   poll();
 }
 async function poll() {
-  const s = await (await fetch("/api/status?since=" + cursor)).json();
+  let s;
+  try { s = await (await fetch("/api/status?since=" + cursor)).json(); }
+  catch { return; }   // προσωρινό σφάλμα (π.χ. ξύπνημα host) — ξαναδοκιμάζει στο επόμενο tick
   cursor = s.cursor;
   if (s.log.length) {
     $("log").textContent += s.log.join("\n") + "\n";
@@ -323,7 +325,14 @@ async function poll() {
 
 /* ---------- results view ---------- */
 async function renderResults(container, manifest, geocodingNow) {
-  const rows = await (await fetch(`/api/runs/${manifest.run_id}/rows`)).json();
+  let rows;
+  try {
+    rows = await (await fetch(
+      `/api/runs/${encodeURIComponent(manifest.run_id)}/rows`)).json();
+  } catch {
+    container.innerHTML = `<div class="err">Αδυναμία φόρτωσης αποτελεσμάτων.</div>`;
+    return;
+  }
   container.innerHTML = "";
   const h = document.createElement("div");
   const dupNote = manifest.n_dups
@@ -600,10 +609,12 @@ function buildTable(rows, runId) {
 
 /* ---------- history ---------- */
 async function loadHistory() {
-  const runs = await (await fetch("/api/runs")).json();
   const list = $("histlist");
   list.classList.remove("hidden");
   $("histview").classList.add("hidden");
+  let runs;
+  try { runs = await (await fetch("/api/runs")).json(); }
+  catch { list.innerHTML = `<div class="note">Αδυναμία φόρτωσης ιστορικού.</div>`; return; }
   list.innerHTML = runs.length ? "" : `<div class="note">Δεν υπάρχουν αποθηκευμένα runs.</div>`;
   for (const m of runs) {
     const d = document.createElement("div");
