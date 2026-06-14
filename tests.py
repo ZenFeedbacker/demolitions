@@ -4,9 +4,12 @@
 Χρειάζονται μόνο το cache/kallikratis.json (υπάρχει μετά το πρώτο run).
 """
 
+import io
 import json
+import os
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 CACHE = str(Path(__file__).parent / "cache")
@@ -317,7 +320,8 @@ class TestRunsConsistency(unittest.TestCase):
             self.assertEqual(m["n_rows"], len(rows), run_dir.name)
             for r in rows:
                 self.assertIn("decision/view", r["url"], run_dir.name)
-                if r["pdf_path"]:
+                # τα PDF υπάρχουν στον δίσκο μόνο αν δεν έχουν εκκαθαριστεί
+                if r["pdf_path"] and m.get("has_pdfs", True):
                     self.assertTrue((run_dir / r["pdf_path"]).exists(),
                                     f"{run_dir.name}: λείπει {r['pdf_path']}")
 
@@ -386,6 +390,146 @@ class TestR2Storage(unittest.TestCase):
 
             store.delete_run("new")
             self.assertFalse(store.exists("new"))
+
+
+class TestLocalStorage(unittest.TestCase):
+    def test_lifecycle(self):
+        from demolitions.storage import LocalStorage
+        with tempfile.TemporaryDirectory() as tmp:
+            st = LocalStorage(tmp)
+            d = st.staging_dir("r1")
+            (d / "pdf" / "Δήμος Χ" / "2021").mkdir(parents=True)
+            (d / "pdf" / "Δήμος Χ" / "2021" / "a.pdf").write_bytes(b"PDF" * 100)
+            (d / "rows.json").write_text("[]", "utf-8")
+            (d / "run.json").write_text(
+                json.dumps({"run_id": "r1", "has_pdfs": True, "n_rows": 0}), "utf-8")
+            (d / "r1.xlsx").write_bytes(b"xlsx")
+
+            self.assertTrue(st.exists("r1"))
+            self.assertEqual([m["run_id"] for m in st.list_runs()], ["r1"])
+            sizes = st.sizes_by_run()["r1"]
+            self.assertEqual(sizes["pdf_bytes"], 300)
+            self.assertGreater(sizes["total_bytes"], 300)
+            self.assertEqual(st.usage()["pdf_bytes"], 300)
+            gen, sz = st.open_member("r1", "r1.xlsx")
+            self.assertEqual(b"".join(gen), b"xlsx")
+            self.assertEqual(sz, 4)
+            self.assertIsNone(st.open_member("r1", "../../etc"))   # traversal
+            self.assertEqual(len(list(st.iter_pdfs("r1"))), 1)
+
+            st.delete_pdfs("r1")
+            self.assertEqual(list(st.iter_pdfs("r1")), [])
+            self.assertTrue(st.exists("r1"))                       # μεταδεδομένα μένουν
+            st.delete_run("r1")
+            self.assertFalse(st.exists("r1"))
+
+
+class TestWebUI(unittest.TestCase):
+    """Ολοκληρωμένος έλεγχος των endpoints με τοπικό store σε temp φάκελο."""
+
+    RID = "test-run_2021-01-01_2021-12-31_xyz"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        os.environ["DEMOLITIONS_STORAGE"] = "local"
+        os.environ["DEMOLITIONS_RUNS_DIR"] = os.path.join(cls.tmp, "runs")
+        os.environ["DEMOLITIONS_CACHE_DIR"] = os.path.join(cls.tmp, "cache")
+        import importlib
+        cls.webui = importlib.reload(importlib.import_module("webui"))
+        cls.client = cls.webui.app.test_client()
+
+    @classmethod
+    def tearDownClass(cls):
+        import shutil
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+        for k in ("DEMOLITIONS_STORAGE", "DEMOLITIONS_RUNS_DIR", "DEMOLITIONS_CACHE_DIR"):
+            os.environ.pop(k, None)
+
+    def setUp(self):
+        # φρέσκο ολοκληρωμένο run πριν από κάθε test (κάποια το διαγράφουν)
+        from demolitions.output import write_xlsx
+        d = self.webui.store.staging_dir(self.RID)
+        (d / "pdf" / "Δήμος Χ" / "2021").mkdir(parents=True, exist_ok=True)
+        (d / "pdf" / "Δήμος Χ" / "2021" / "ΑΔΑ1.pdf").write_bytes(b"%PDF-1.4 x")
+        rows = [{
+            "ada": "ΑΔΑ1", "url": "https://diavgeia.gov.gr/decision/view/ΑΔΑ1",
+            "date": "2021-01-15", "year": 2021, "dimos": "Δήμος Χ",
+            "eidos": "κατεδάφιση", "ektasi": "ολική", "dim_enotita": "",
+            "poli": "Χ", "odos": "Οδός", "ar_apo": "1", "ar_eos": "", "ot": "",
+            "kaek": "", "perigrafi": "ΚΑΤΕΔΑΦΙΣΗ", "orofoi": 1,
+            "lat": 41.1, "lon": 24.1, "precision": "κτίσμα (PDF)",
+            "parse_ok": True, "pdf_path": "pdf/Δήμος Χ/2021/ΑΔΑ1.pdf",
+            "flags": "", "poly": [[41.1, 24.1], [41.1, 24.11], [41.11, 24.11]],
+        }]
+        write_xlsx(rows, d / (self.RID + ".xlsx"))
+        (d / "rows.json").write_text(json.dumps(rows, ensure_ascii=False), "utf-8")
+        (d / "run.json").write_text(json.dumps({
+            "run_id": self.RID, "area": "Δήμος Χ", "from": "2021-01-01",
+            "to": "2021-12-31", "created": "2021-01-15", "n_rows": 1,
+            "n_dups": 0, "geocoded": True, "has_pdfs": True}, ensure_ascii=False), "utf-8")
+
+    def _url(self, path):
+        from urllib.parse import quote
+        return path.replace("<rid>", quote(self.RID))
+
+    def test_index_and_areas(self):
+        r = self.client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(b"tab-about", r.data)
+        self.assertIn(b'value="2018-10-01"', r.data)   # default «Από»
+        self.assertGreater(len(self.client.get("/api/areas").get_json()), 300)
+
+    def test_about(self):
+        a = self.client.get("/api/about").get_json()
+        self.assertEqual(a["backend"], "local")
+        self.assertGreaterEqual(a["n_runs"], 1)
+        self.assertEqual(a["data_since"], "2018-10-01")
+
+    def test_runs_has_sizes(self):
+        m = next(x for x in self.client.get("/api/runs").get_json()
+                 if x["run_id"] == self.RID)
+        self.assertGreater(m["total_bytes"], 0)
+        self.assertGreater(m["pdf_bytes"], 0)
+
+    def test_serve_xlsx_and_rows(self):
+        r = self.client.get(self._url("/runs/<rid>/<rid>.xlsx".replace(
+            "<rid>.xlsx", __import__("urllib.parse", fromlist=["quote"]).quote(self.RID) + ".xlsx")))
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("attachment", r.headers.get("Content-Disposition", ""))
+        rows = self.client.get(self._url("/api/runs/<rid>/rows")).get_json()
+        self.assertEqual(len(rows), 1)
+
+    def test_zip_contains_xlsx_and_pdf(self):
+        r = self.client.get(self._url("/zip/<rid>.zip"))
+        self.assertEqual(r.status_code, 200)
+        names = zipfile.ZipFile(io.BytesIO(r.data)).namelist()
+        self.assertTrue(any(n.endswith(".xlsx") for n in names))
+        self.assertTrue(any(n.endswith(".pdf") for n in names))
+
+    def test_run_validation(self):
+        r = self.client.post("/api/run", json={
+            "area": "Δήμος Ασγκαμπάτ", "from": "2021-01-01", "to": "2021-12-31"})
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post("/api/run", json={
+            "area": "Δήμος Δράμας", "from": "2022-01-01", "to": "2021-01-01"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_traversal_blocked(self):
+        r = self.client.get(self._url("/runs/<rid>/..%2f..%2fwebui.py"))
+        self.assertIn(r.status_code, (400, 404))
+
+    def test_clear_pdfs_then_delete(self):
+        r = self.client.delete(self._url("/api/runs/<rid>/pdfs"))
+        self.assertEqual(r.status_code, 200)
+        m = next(x for x in self.client.get("/api/runs").get_json()
+                 if x["run_id"] == self.RID)
+        self.assertFalse(m["has_pdfs"])
+        self.assertEqual(m["pdf_bytes"], 0)
+        self.assertTrue(self.webui.store.exists(self.RID))   # μεταδεδομένα μένουν
+        r = self.client.delete(self._url("/api/runs/<rid>"))
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(self.webui.store.exists(self.RID))
 
 
 if __name__ == "__main__":

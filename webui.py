@@ -78,58 +78,61 @@ def _result_payload(run_id):
     return manifest
 
 
-def _run_worker(area, from_date, to_date, run_id):
+def _run_worker(j, area, from_date, to_date, run_id):
     try:
         staging = store.staging_dir(run_id)
         run_pipeline(area, from_date, to_date, staging, cache_dir=CACHE_DIR,
-                     log=job.append, step=job.step,
-                     cancel=job.cancel_event.is_set)
-        job.append("Αποθήκευση αρχείων…")
-        store.save_run(run_id, progress=lambda i, n: job.step("upload", i, n))
+                     log=j.append, step=j.step, cancel=j.cancel_event.is_set)
+        j.append("Αποθήκευση αρχείων…")
+        store.save_run(run_id, progress=lambda i, n: j.step("upload", i, n))
         store.free_local_pdfs(run_id)
-        job.result = _result_payload(run_id)
-        job.state = "geocoding"
-        _geocode_worker(run_id, staging)
+        j.result = _result_payload(run_id)
+        j.state = "geocoding"
+        _geocode_worker(j, run_id, staging)
     except CancelledRun:
-        job.append("Ακυρώθηκε.")
-        job.state = "cancelled"
+        j.append("Ακυρώθηκε.")
+        j.state = "cancelled"
         store.cleanup(run_id)
     except (AreaError, NoPermitsFound) as e:
-        job.error = str(e)
-        job.state = "error"
+        j.error = str(e)
+        j.state = "error"
         store.cleanup(run_id)
     except Exception as e:
-        job.append(traceback.format_exc())
-        job.error = f"Σφάλμα: {e}"
-        job.state = "error"
+        j.append(traceback.format_exc())
+        j.error = f"Σφάλμα: {e}"
+        j.state = "error"
         store.cleanup(run_id)
 
 
-def _geocode_worker(run_id, staging=None):
+def _geocode_worker(j, run_id, staging=None):
     try:
         if staging is None:                       # κρύα εκκίνηση (παλιό run)
             staging = store.prepare_staging(run_id)
-        enrich_geocode(staging, cache_dir=CACHE_DIR, log=job.append,
-                       step=job.step, cancel=job.cancel_event.is_set)
+        enrich_geocode(staging, cache_dir=CACHE_DIR, log=j.append,
+                       step=j.step, cancel=j.cancel_event.is_set)
         store.save_meta(run_id)   # μόνο json/xlsx — τα PDF ανέβηκαν ήδη
-        store.enforce_pdf_cap(log=job.append)
-        job.result = _result_payload(run_id)
-        job.state = "done"
+        store.enforce_pdf_cap(log=j.append)
+        j.result = _result_payload(run_id)
+        j.state = "done"
     except CancelledRun:
         store.save_meta(run_id)   # τα μερικά αποτελέσματα σώζονται (geocoded=false)
-        job.append("Η γεωκωδικοποίηση ακυρώθηκε — οι μερικές συντεταγμένες σώθηκαν.")
-        job.result = _result_payload(run_id)
-        job.state = "done"
+        j.append("Η γεωκωδικοποίηση ακυρώθηκε — οι μερικές συντεταγμένες σώθηκαν.")
+        j.result = _result_payload(run_id)
+        j.state = "done"
     except Exception as e:
-        job.append(traceback.format_exc())
-        job.error = f"Σφάλμα γεωκωδικοποίησης: {e}"
-        job.state = "error"
+        j.append(traceback.format_exc())
+        j.error = f"Σφάλμα γεωκωδικοποίησης: {e}"
+        j.state = "error"
     finally:
         store.cleanup(run_id)
 
 
 def _start(target, *args, state="running", result=None, run_id=None, meta=None):
-    """Ξεκινά νέο job αν δεν τρέχει ήδη κάποιο. Επιστρέφει True/False."""
+    """Ξεκινά νέο job αν δεν τρέχει ήδη κάποιο. Επιστρέφει True/False.
+
+    Ο worker δουλεύει πάνω στο instance `j` που του περνιέται (όχι στο global
+    `job`), ώστε ένα μεταγενέστερο run να μην μπορεί ποτέ να αλλοιώσει την
+    κατάσταση ενός άλλου."""
     global job
     with lock:
         if job.state in ("running", "geocoding"):
@@ -139,7 +142,7 @@ def _start(target, *args, state="running", result=None, run_id=None, meta=None):
         job.result = result
         job.run_id = run_id
         job.meta = meta or {}
-        threading.Thread(target=target, args=args, daemon=True).start()
+        threading.Thread(target=target, args=(job,) + args, daemon=True).start()
         return True
 
 
@@ -221,7 +224,9 @@ def api_status():
 
 @app.post("/api/cancel")
 def api_cancel():
-    job.cancel_event.set()
+    with lock:
+        j = job
+    j.cancel_event.set()
     return jsonify({"ok": True})
 
 
@@ -336,7 +341,7 @@ def serve_zip(run_id):
             m = store.open_member(run_id, arc)
             if m:
                 zs.add(data=m[0], arcname=arc)
-        else:                                        # κατ' απαίτηση από Διαύγεια
+        elif r.get("ada"):                           # κατ' απαίτηση από Διαύγεια
             zs.add(data=_diavgeia_pdf(r["ada"]), arcname=arc)
     return Response(zs, mimetype="application/zip",
                     headers={"Content-Disposition": _attachment(f"{run_id}.zip")})

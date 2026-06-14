@@ -379,10 +379,14 @@ function addMapToggle(box, rows, runId) {
   box.insertBefore(mapDiv, box.querySelector(".tablewrap"));
   box.insertBefore(legend, box.querySelector(".tablewrap"));
 
-  let map = null, cluster = null, skipFit = false;
+  let map = null, cluster = null, skipFit = false, activePoly = null;
   const markerByRow = new Map();
+  function clearPoly() {
+    if (activePoly) { map.removeLayer(activePoly); activePoly = null; }
+  }
   function update(view) {
     cluster.clearLayers();
+    clearPoly();                                 // μην αφήσεις ορφανό περίγραμμα
     markerByRow.clear();
     const pts = view.filter(r => r.lat != null);
     for (const r of pts) {
@@ -403,12 +407,11 @@ function addMapToggle(box, rows, runId) {
         ` · <span style="color:${PREC_COLORS[r.precision] || "#8a8273"}">${esc(r.precision)}</span>`);
       if (r.poly && r.poly.length >= 3) {   // περίγραμμα κτίσματος από το PDF
         m.on("popupopen", () => {
-          m._pg = L.polygon(r.poly, { color: "#7b2d8b", weight: 2,
-                                      fillOpacity: .25 }).addTo(map);
+          clearPoly();
+          activePoly = L.polygon(r.poly, { color: "#7b2d8b", weight: 2,
+                                           fillOpacity: .25 }).addTo(map);
         });
-        m.on("popupclose", () => {
-          if (m._pg) { map.removeLayer(m._pg); m._pg = null; }
-        });
+        m.on("popupclose", clearPoly);
       }
       cluster.addLayer(m);
       markerByRow.set(r, m);
@@ -612,7 +615,7 @@ async function loadHistory() {
           ? "με συντεταγμένες" : "χωρίς συντεταγμένες"}</span>`;
     const size = m.total_bytes ? `<span title="χώρος στον δίσκο">${fmtBytes(m.total_bytes)}</span>` : "";
     const clearBtn = (!m.active && m.has_pdfs && m.pdf_bytes)
-      ? `<button class="del cache">Καθαρισμός PDF (${fmtBytes(m.pdf_bytes)})</button>` : "";
+      ? `<button class="del cache">Καθαρισμός PDF</button>` : "";
     d.innerHTML = `<b></b><span>${dmy(m.from)} – ${dmy(m.to)}</span>
       <span>${m.n_rows == null ? "—" : m.n_rows + " άδειες"}</span>
       ${status}

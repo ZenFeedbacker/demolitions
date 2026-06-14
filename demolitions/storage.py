@@ -33,6 +33,12 @@ def content_type(name):
     return CONTENT_TYPES.get(Path(name).suffix.lower(), "application/octet-stream")
 
 
+def _sum_usage(sizes):
+    """Άθροισμα του sizes_by_run -> {storage_bytes, pdf_bytes}."""
+    return {"storage_bytes": sum(s["total_bytes"] for s in sizes.values()),
+            "pdf_bytes": sum(s["pdf_bytes"] for s in sizes.values())}
+
+
 def make_storage():
     """Backend από τα env vars (default: τοπικό runs/ δίπλα στο webui)."""
     kind = os.environ.get("DEMOLITIONS_STORAGE", "local").lower()
@@ -134,16 +140,6 @@ class LocalStorage:
     def enforce_pdf_cap(self, log=lambda m: None):
         pass  # τοπικά δεν περιορίζουμε (ο δίσκος είναι ο δίσκος του χρήστη)
 
-    def usage(self):
-        total = pdf = 0
-        for p in self.runs.rglob("*"):
-            if p.is_file():
-                s = p.stat().st_size
-                total += s
-                if p.suffix == ".pdf":
-                    pdf += s
-        return {"storage_bytes": total, "pdf_bytes": pdf}
-
     def sizes_by_run(self):
         out = {}
         for d in self.runs.iterdir():
@@ -154,10 +150,13 @@ class LocalStorage:
                 if p.is_file():
                     s = p.stat().st_size
                     total += s
-                    if p.suffix == ".pdf":
+                    if "pdf" in p.relative_to(d).parts:   # κάτω από pdf/
                         pdf += s
             out[d.name] = {"pdf_bytes": pdf, "total_bytes": total}
         return out
+
+    def usage(self):
+        return _sum_usage(self.sizes_by_run())
 
 
 # --------------------------------------------------------------------------- #
@@ -268,7 +267,10 @@ class R2Storage:
         for page in paginator.paginate(Bucket=self.bucket, Prefix="runs/"):
             for o in page.get("Contents", []):
                 if o["Key"].endswith("/run.json"):
-                    m = self.read_manifest(o["Key"].split("/")[1])
+                    try:   # ένα run που σβήνεται ταυτόχρονα δεν ρίχνει όλη τη λίστα
+                        m = self.read_manifest(o["Key"].split("/")[1])
+                    except Exception:
+                        continue
                     m["_mtime"] = o["LastModified"].timestamp()
                     out.append(m)
         out.sort(key=lambda m: m["_mtime"], reverse=True)
@@ -303,14 +305,19 @@ class R2Storage:
             self._delete_keys(keys)
 
     def enforce_pdf_cap(self, log=lambda m: None):
+        sizes = self.sizes_by_run()              # ένα πέρασμα για τα μεγέθη
         total = 0
-        for m in self.list_runs():           # newest -> oldest
+        kept_newest = False
+        for m in self.list_runs():               # newest -> oldest
             if not m.get("has_pdfs"):
                 continue
             run_id = m["run_id"]
-            size = sum(sz for _, sz in self.iter_pdfs(run_id))
-            if total + size <= self.pdf_cap:
+            size = sizes.get(run_id, {}).get("pdf_bytes", 0)
+            # το πιο πρόσφατο run κρατά πάντα τα PDF του (ο χρήστης μόλις
+            # το έτρεξε)· τα υπόλοιπα μέχρι να γεμίσει το όριο
+            if not kept_newest or total + size <= self.pdf_cap:
                 total += size
+                kept_newest = True
             else:
                 self.delete_pdfs(run_id)
                 m.pop("_mtime", None)
@@ -319,14 +326,7 @@ class R2Storage:
                 log(f"Εκκαθάριση PDF παλαιότερου run: {run_id}")
 
     def usage(self):
-        total = pdf = 0
-        paginator = self.s3.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=self.bucket, Prefix="runs/"):
-            for o in page.get("Contents", []):
-                total += o["Size"]
-                if "/pdf/" in o["Key"]:
-                    pdf += o["Size"]
-        return {"storage_bytes": total, "pdf_bytes": pdf}
+        return _sum_usage(self.sizes_by_run())
 
     def sizes_by_run(self):
         out = {}
