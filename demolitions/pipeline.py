@@ -12,7 +12,7 @@ Callbacks: `log(msg)` για κείμενο προόδου, `step(phase, i, n)` 
 import json
 import shutil
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from .areas import municipality_labels, normalize, resolve_area
@@ -141,6 +141,7 @@ def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
         "from": from_date.isoformat(),
         "to": to_date.isoformat(),
         "created": date.today().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "n_rows": len(rows),
         "n_dups": n_dups,
         "geocoded": False,

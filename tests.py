@@ -419,7 +419,8 @@ class TestR2Storage(unittest.TestCase):
         if importlib.util.find_spec("moto") is None:
             self.skipTest("moto δεν είναι εγκατεστημένο")
 
-    def _make_staging(self, store, run_id, n_pdfs, pdf_bytes=b"%PDF-1.4 test"):
+    def _make_staging(self, store, run_id, n_pdfs, pdf_bytes=b"%PDF-1.4 test",
+                      created="2024-01-01", created_at=None):
         d = store.staging_dir(run_id)
         rows = []
         for i in range(n_pdfs):
@@ -430,8 +431,12 @@ class TestR2Storage(unittest.TestCase):
             rows.append({"ada": f"ΑΔΑ{i}", "pdf_path": rel})
         (d / "rows.json").write_text(json.dumps(rows, ensure_ascii=False), "utf-8")
         (d / (run_id + ".xlsx")).write_bytes(b"xlsx-bytes")
+        manifest = {"run_id": run_id, "n_rows": n_pdfs, "has_pdfs": True,
+                    "created": created}
+        if created_at:
+            manifest["created_at"] = created_at
         (d / "run.json").write_text(json.dumps(
-            {"run_id": run_id, "n_rows": n_pdfs, "has_pdfs": True}), "utf-8")
+            manifest), "utf-8")
 
     def test_roundtrip_and_eviction(self):
         from moto import mock_aws
@@ -446,9 +451,11 @@ class TestR2Storage(unittest.TestCase):
                               endpoint_url="https://s3.amazonaws.com")
 
             # δύο run, 3 PDF το καθένα (13 bytes -> 39 bytes/run)
-            self._make_staging(store, "old", 3)
+            self._make_staging(store, "old", 3, created="2024-01-01",
+                               created_at="2024-01-01T10:00:00+00:00")
             store.save_run("old")
-            self._make_staging(store, "new", 3)
+            self._make_staging(store, "new", 3, created="2024-01-02",
+                               created_at="2024-01-02T10:00:00+00:00")
             store.save_run("new")
 
             self.assertTrue(store.exists("new"))
@@ -475,6 +482,33 @@ class TestR2Storage(unittest.TestCase):
 
             store.delete_run("new")
             self.assertFalse(store.exists("new"))
+
+    def test_eviction_uses_creation_time_not_manifest_mtime(self):
+        from moto import mock_aws
+        with mock_aws():
+            import boto3
+            boto3.client("s3", region_name="us-east-1").create_bucket(Bucket="demo-test-bucket")
+            os.environ.update(R2_BUCKET="demo-test-bucket", R2_ACCOUNT_ID="acc",
+                              R2_ACCESS_KEY_ID="k", R2_SECRET_ACCESS_KEY="s")
+            from demolitions.storage import R2Storage
+            store = R2Storage("demo-test-bucket", "acc", "k", "s", pdf_cap=40,
+                              endpoint_url="https://s3.amazonaws.com")
+
+            self._make_staging(store, "old", 3, created="2024-01-01",
+                               created_at="2024-01-01T10:00:00+00:00")
+            store.save_run("old")
+            self._make_staging(store, "new", 3, created="2024-01-02",
+                               created_at="2024-01-02T10:00:00+00:00")
+            store.save_run("new")
+
+            manifest = store.read_manifest("old")
+            manifest["geocoded"] = True
+            store.write_manifest("old", manifest)  # παλιό bug: το έκανε «νεότερο»
+
+            store.enforce_pdf_cap()
+            kept = {m["run_id"]: m.get("has_pdfs") for m in store.list_runs()}
+            self.assertEqual(kept["new"], True)
+            self.assertEqual(kept["old"], False)
 
 
 class TestLocalStorage(unittest.TestCase):

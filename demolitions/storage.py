@@ -39,6 +39,15 @@ def _sum_usage(sizes):
             "pdf_bytes": sum(s["pdf_bytes"] for s in sizes.values())}
 
 
+def _manifest_sort_key(manifest):
+    """Νεότερο -> παλαιότερο, με βάση αμετάβλητο χρόνο δημιουργίας run."""
+    if manifest.get("created_at"):
+        return (3, manifest["created_at"], manifest.get("run_id", ""))
+    if manifest.get("created"):
+        return (2, manifest["created"], manifest.get("run_id", ""))
+    return (1, manifest.get("_mtime", 0), manifest.get("run_id", ""))
+
+
 def make_storage():
     """Backend από τα env vars (default: τοπικό runs/ δίπλα στο webui)."""
     kind = os.environ.get("DEMOLITIONS_STORAGE", "local").lower()
@@ -121,7 +130,7 @@ class LocalStorage:
             m = json.loads(mf.read_text("utf-8"))
             m["_mtime"] = mf.stat().st_mtime
             out.append(m)
-        out.sort(key=lambda m: m["_mtime"], reverse=True)
+        out.sort(key=_manifest_sort_key, reverse=True)
         return out
 
     def iter_pdfs(self, run_id):
@@ -278,7 +287,7 @@ class R2Storage:
                         continue
                     m["_mtime"] = o["LastModified"].timestamp()
                     out.append(m)
-        out.sort(key=lambda m: m["_mtime"], reverse=True)
+        out.sort(key=_manifest_sort_key, reverse=True)
         return out
 
     def iter_pdfs(self, run_id):
