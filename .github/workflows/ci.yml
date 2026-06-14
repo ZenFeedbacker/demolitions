@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
 
+# Τα actions checkout/setup-python να τρέχουν σε Node 24 (το Node 20 αποσύρεται)
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -35,4 +39,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Render deploy
-        run: curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL δεν έχει οριστεί — παράλειψη deploy."
+            exit 0
+          fi
+          curl -fsS -X POST "$HOOK"
