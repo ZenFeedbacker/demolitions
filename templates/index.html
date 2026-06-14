@@ -374,52 +374,63 @@ function addMapToggle(box, rows, runId) {
       ? `${pts.length} σημεία στον χάρτη — ${missing} άδειες χωρίς συντεταγμένες δεν εμφανίζονται.`
       : `${pts.length} σημεία στον χάρτη`;
   }
-  function show(mapMode) {
-    btnTable.classList.toggle("on", !mapMode);
-    btnMap.classList.toggle("on", mapMode);
-    box.querySelector(".tablewrap").classList.toggle("hidden", mapMode);
-    mapDiv.classList.toggle("hidden", !mapMode);
-    legend.classList.toggle("hidden", !mapMode);
-    if (mapMode) {
-      if (!map) {
-        map = L.map(mapDiv).setView([38.3, 24.0], 6);
-        L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          maxZoom: 19, attribution: "© OpenStreetMap contributors",
-        }).addTo(map);
-        cluster = L.markerClusterGroup({ maxClusterRadius: 40 });
-        map.addLayer(cluster);
-        const Recenter = L.Control.extend({
-          options: { position: "topleft" },
-          onAdd() {
-            const div = L.DomUtil.create("div", "leaflet-bar");
-            const a = L.DomUtil.create("a", "recenter", div);
-            a.href = "#"; a.title = "Επαναφορά στα αποτελέσματα";
-            a.textContent = "⌖";
-            L.DomEvent.on(a, "click", e => {
-              L.DomEvent.preventDefault(e);
-              if (cluster.getLayers().length)
-                map.fitBounds(cluster.getBounds().pad(0.15), { maxZoom: 16 });
-            });
-            return div;
-          },
+  function ensureMap() {
+    if (map) return;
+    map = L.map(mapDiv).setView([38.3, 24.0], 6);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19, subdomains: "abc",
+      attribution: "© OpenStreetMap contributors",
+    }).addTo(map);
+    cluster = L.markerClusterGroup({ maxClusterRadius: 40 });
+    map.addLayer(cluster);
+    const Recenter = L.Control.extend({
+      options: { position: "topleft" },
+      onAdd() {
+        const div = L.DomUtil.create("div", "leaflet-bar");
+        const a = L.DomUtil.create("a", "recenter", div);
+        a.href = "#"; a.title = "Επαναφορά στα αποτελέσματα";
+        a.textContent = "⌖";
+        L.DomEvent.on(a, "click", e => {
+          L.DomEvent.preventDefault(e);
+          if (cluster.getLayers().length)
+            map.fitBounds(cluster.getBounds().pad(0.15), { maxZoom: 16 });
         });
-        map.addControl(new Recenter());
-        box._onFilter = v => { if (!mapDiv.classList.contains("hidden")) update(v); };
-      }
+        return div;
+      },
+    });
+    map.addControl(new Recenter());
+    box._onFilter = v => { if (!mapDiv.classList.contains("hidden")) update(v); };
+  }
+  function showMap(on) {
+    btnTable.classList.toggle("on", !on);
+    btnMap.classList.toggle("on", on);
+    box.querySelector(".tablewrap").classList.toggle("hidden", on);
+    mapDiv.classList.toggle("hidden", !on);
+    legend.classList.toggle("hidden", !on);
+  }
+  // ο Leaflet πρέπει να μετρήσει το container ΑΦΟΥ γίνει ορατό (layout)·
+  // αλλιώς φορτώνει σπασμένο/μετατοπισμένο πλέγμα tiles — γι' αυτό rAF
+  function refresh(after) {
+    requestAnimationFrame(() => {
       map.invalidateSize();
       update(box._filtered);
-    } else {
-      box.querySelector(".ftext").dispatchEvent(new Event("input"));  // ξανά η σημείωση πίνακα
-    }
+      if (after) after();
+    });
   }
-  btnTable.onclick = () => show(false);
-  btnMap.onclick = () => show(true);
+  btnTable.onclick = () => {
+    showMap(false);
+    box.querySelector(".ftext").dispatchEvent(new Event("input"));  // σημείωση πίνακα
+  };
+  btnMap.onclick = () => { ensureMap(); showMap(true); refresh(); };
   box._showOnMap = r => {
+    ensureMap();
+    showMap(true);
     skipFit = true;
-    show(true);
-    skipFit = false;
-    const m = markerByRow.get(r);
-    if (m) cluster.zoomToShowLayer(m, () => m.openPopup());
+    refresh(() => {
+      skipFit = false;
+      const m = markerByRow.get(r);
+      if (m) cluster.zoomToShowLayer(m, () => m.openPopup());
+    });
   };
 }
 
