@@ -100,6 +100,15 @@
           border-radius: 50%; margin-right: .3rem; vertical-align: -1px; }
   .leaflet-popup-content { font-size: .82rem; }
   a.recenter { font-size: 20px; font-weight: 700; }
+  #panel-about { max-width: 760px; line-height: 1.5; }
+  .stats { display: flex; flex-wrap: wrap; gap: .7rem; margin: 1rem 0 1.4rem; }
+  .statbox { flex: 1 1 8rem; background: #fff; border: 1px solid var(--line);
+          border-radius: 8px; padding: .7rem .9rem; }
+  .statval { font-size: 1.3rem; font-weight: 700; color: var(--acc); }
+  .statlbl { font-size: .8rem; color: #6b655a; }
+  .howto { padding-left: 1.2rem; }
+  .howto li { margin: .35rem 0; }
+  #panel-about h3 { margin: 1.2rem 0 .4rem; font-size: 1.05rem; }
 </style>
 <script src="/static/leaflet.js"></script>
 <script src="/static/leaflet.markercluster.js"></script>
@@ -112,6 +121,7 @@
   <div class="tabs">
     <button id="tab-search" class="on" onclick="showTab('search')">Νέα αναζήτηση</button>
     <button id="tab-history" onclick="showTab('history')">Ιστορικό</button>
+    <button id="tab-about" onclick="showTab('about')">Σχετικά</button>
   </div>
 
   <section id="panel-search">
@@ -122,7 +132,7 @@
           <div id="aclist" class="ac-list hidden"></div>
         </span>
       </label>
-      <label>Από <input type="date" id="from" value="2018-10-01" min="2018-10-01" required></label>
+      <label>Από <input type="date" id="from" value="{{ start }}" min="{{ start }}" required></label>
       <label>Έως <input type="date" id="to" value="{{ today }}" required></label>
       <button class="go" id="go" type="submit">Εκκίνηση</button>
     </form>
@@ -145,6 +155,10 @@
       <div id="histresults"></div>
     </div>
   </section>
+
+  <section id="panel-about" class="hidden">
+    <div id="aboutbody" class="note">Φόρτωση…</div>
+  </section>
 </div>
 
 <script>
@@ -158,56 +172,86 @@ const MAXROWS = 500;
 
 /* ---------- tabs ---------- */
 function showTab(name) {
-  for (const t of ["search", "history"]) {
+  for (const t of ["search", "history", "about"]) {
     $("tab-" + t).classList.toggle("on", t === name);
     $("panel-" + t).classList.toggle("hidden", t !== name);
   }
   if (name === "history") loadHistory();
+  if (name === "about") loadAbout();
 }
 function backToList() {
   $("histview").classList.add("hidden");
   $("histlist").classList.remove("hidden");
 }
 
-/* ---------- autocomplete ---------- */
+/* ---------- autocomplete + \u03c0\u03c1\u03cc\u03c3\u03c6\u03b1\u03c4\u03b5\u03c2 \u03b1\u03bd\u03b1\u03b6\u03b7\u03c4\u03ae\u03c3\u03b5\u03b9\u03c2 ---------- */
 let AREAS = null, acSel = -1, acItems = [];
 const norm = s => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
                    .toUpperCase().replace(/-/g, " ").replace(/\s+/g, " ").trim();
+const RECENT_KEY = "demolitions.recent";
+function getRecent() {
+  try { return JSON.parse(localStorage.getItem(RECENT_KEY)) || []; }
+  catch { return []; }
+}
+function pushRecent(area, from, to) {
+  const r = getRecent().filter(x => x.area !== area);
+  r.unshift({ area, from, to });
+  localStorage.setItem(RECENT_KEY, JSON.stringify(r.slice(0, 8)));
+}
 async function ensureAreas() {
   if (!AREAS) AREAS = await (await fetch("/api/areas")).json();
 }
-$("area").addEventListener("input", async () => {
-  await ensureAreas();
-  const q = norm($("area").value);
-  if (q.length < 2) return hideAc();
-  const starts = AREAS.filter(a => a.norm.startsWith(q));
-  const within = AREAS.filter(a => !a.norm.startsWith(q) && a.norm.includes(q));
-  acItems = starts.concat(within).slice(0, 12);
-  acSel = -1;
+function renderAc(items) {
+  acItems = items; acSel = -1;
   const list = $("aclist");
   list.innerHTML = "";
-  for (const a of acItems) {
+  for (const it of items) {
     const d = document.createElement("div");
     d.innerHTML = `<span></span><span class="t"></span>`;
-    d.firstChild.textContent = a.label;
-    d.lastChild.textContent = a.type;
-    d.onmousedown = e => { e.preventDefault(); pickAc(a); };
+    d.firstChild.textContent = it.text;
+    d.lastChild.textContent = it.sub;
+    d.onmousedown = e => { e.preventDefault(); it.apply(); hideAc(); };
     list.appendChild(d);
   }
-  list.classList.toggle("hidden", !acItems.length);
+  list.classList.toggle("hidden", !items.length);
+}
+function showRecent() {
+  renderAc(getRecent().map(x => ({
+    text: x.area, sub: x.from ? dmy(x.from) + "\u2013" + dmy(x.to) : "\u03c0\u03c1\u03cc\u03c3\u03c6\u03b1\u03c4\u03b7",
+    apply: () => {
+      $("area").value = x.area;
+      if (x.from) $("from").value = x.from;
+      if (x.to) $("to").value = x.to;
+    },
+  })));
+}
+async function showPlaces(q) {
+  await ensureAreas();
+  const starts = AREAS.filter(a => a.norm.startsWith(q));
+  const within = AREAS.filter(a => !a.norm.startsWith(q) && a.norm.includes(q));
+  renderAc(starts.concat(within).slice(0, 12).map(a => ({
+    text: a.label, sub: a.type, apply: () => { $("area").value = a.label; },
+  })));
+}
+$("area").addEventListener("focus", () => {
+  if (!$("area").value.trim()) showRecent();
+});
+$("area").addEventListener("input", () => {
+  const q = norm($("area").value);
+  if (q.length < 2) { q ? hideAc() : showRecent(); return; }
+  showPlaces(q);
 });
 $("area").addEventListener("keydown", e => {
   if ($("aclist").classList.contains("hidden")) return;
   if (e.key === "ArrowDown") { acSel = Math.min(acSel + 1, acItems.length - 1); }
   else if (e.key === "ArrowUp") { acSel = Math.max(acSel - 1, 0); }
-  else if (e.key === "Enter" && acSel >= 0) { e.preventDefault(); pickAc(acItems[acSel]); return; }
+  else if (e.key === "Enter" && acSel >= 0) { e.preventDefault(); acItems[acSel].apply(); hideAc(); return; }
   else if (e.key === "Escape") { hideAc(); return; }
   else return;
   e.preventDefault();
   [...$("aclist").children].forEach((d, i) => d.classList.toggle("sel", i === acSel));
 });
 $("area").addEventListener("blur", () => setTimeout(hideAc, 150));
-function pickAc(a) { $("area").value = a.label; hideAc(); }
 function hideAc() { $("aclist").classList.add("hidden"); acSel = -1; }
 
 /* ---------- run + polling ---------- */
@@ -223,6 +267,7 @@ $("form").addEventListener("submit", async e => {
     $("formerr").classList.remove("hidden");
     return;
   }
+  pushRecent(body.area, body.from, body.to);
   $("results").classList.add("hidden");
   $("results").innerHTML = "";
   $("log").textContent = "";
@@ -588,6 +633,68 @@ async function loadHistory() {
     };
     list.appendChild(d);
   }
+}
+
+/* ---------- σχετικά ---------- */
+function fmtBytes(n) {
+  if (!n) return "0 MB";
+  const mb = n / 1048576;
+  return mb >= 1024 ? (mb / 1024).toFixed(2) + " GB" : mb.toFixed(1) + " MB";
+}
+function fmtUptime(s) {
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600),
+        m = Math.floor(s % 3600 / 60);
+  return (d ? d + "η " : "") + (h || d ? h + "ω " : "") + m + "λ";
+}
+async function loadAbout() {
+  const b = $("aboutbody");
+  b.textContent = "Φόρτωση…";
+  let a;
+  try { a = await (await fetch("/api/about")).json(); }
+  catch { b.textContent = "Αδυναμία φόρτωσης στατιστικών."; return; }
+  const stat = (label, val) =>
+    `<div class="statbox"><div class="statval">${val}</div>` +
+    `<div class="statlbl">${label}</div></div>`;
+  b.innerHTML = `
+    <p>Εργαλείο χαρτογράφησης των αδειών κατεδάφισης στην Ελλάδα, με δεδομένα
+       από τη <b>Διαύγεια</b> (οικοδομικές πράξεις του ΤΕΕ / e-Άδειες). Στο
+       πνεύμα της έρευνας της «Καθημερινής»
+       <a href="https://www.kathimerini.gr/investigations/563435530/o-diarkis-thanatos-tis-monokatoikias/" target="_blank">«Ο διαρκής θάνατος της μονοκατοικίας»</a>.</p>
+
+    <div class="stats">
+      ${stat("αναζητήσεις", a.n_runs)}
+      ${stat("άδειες κατεδάφισης", a.n_permits.toLocaleString("el"))}
+      ${stat("αποθήκευση", fmtBytes(a.storage_bytes))}
+      ${stat("PDF σε cache", fmtBytes(a.pdf_bytes) + " / " + fmtBytes(a.pdf_cap))}
+      ${stat("σε λειτουργία", fmtUptime(a.uptime_seconds))}
+      ${stat("αποθήκη", a.backend === "r2" ? "Cloudflare R2" : "τοπικός δίσκος")}
+    </div>
+
+    <h3>Οδηγίες χρήσης</h3>
+    <ol class="howto">
+      <li><b>Νέα αναζήτηση</b>: γράψε μια <b>περιοχή</b> στο πεδίο (αρχίζοντας
+        να πληκτρολογείς εμφανίζονται προτάσεις — δήμος, νομός/ΠΕ, περιφέρεια,
+        ή «Ελλάδα»· με κενό πεδίο βλέπεις τις πρόσφατες αναζητήσεις σου).</li>
+      <li>Διάλεξε <b>διάστημα</b> ημερομηνιών. Τα δεδομένα ξεκινούν
+        ${dmy(a.data_since)} (έναρξη e-Άδειες) — νωρίτερα δεν υπάρχουν άδειες.</li>
+      <li>Πάτησε <b>Εκκίνηση</b>. Το spreadsheet (Excel) και ο πίνακας
+        εμφανίζονται <b>αμέσως</b>· οι <b>συντεταγμένες</b> προστίθενται μετά
+        ως εμπλουτισμός (μπορείς να συνεχίσεις να δουλεύεις).</li>
+      <li>Στα αποτελέσματα: <b>Λήψη Excel</b> ή <b>zip</b> (όλα τα PDF),
+        διαδραστικός <b>πίνακας</b> (ταξινόμηση/φίλτρα: δήμος, είδος,
+        ολική/τμηματική, όροφοι), και προβολή <b>Χάρτη</b>. Το 📍 κάθε γραμμής
+        πάει στη θέση της στον χάρτη· η στήλη ΑΔΑ ανοίγει την πράξη στη Διαύγεια.</li>
+      <li><b>Ιστορικό</b>: παλιότερες αναζητήσεις — άνοιγμα, λήψη ή διαγραφή.</li>
+    </ol>
+    <p class="note">Μετράει μόνο <b>τελικές</b> άδειες (όχι προεγκρίσεις/
+      αναθεωρήσεις). Λεπτομέρειες μεθοδολογίας στο
+      <a href="${a.github}#μεθοδολογία" target="_blank">README</a>.</p>
+
+    <p class="note">
+      Πηγαίος κώδικας: <a href="${a.github}" target="_blank">${a.github.replace("https://", "")}</a>
+      ${a.version ? " · έκδοση " + a.version : ""}<br>
+      Δημιουργήθηκε από τον Φίλιππο Φεϊζίδη · © ${new Date().getFullYear()}
+    </p>`;
 }
 
 /* ---------- resume on load ---------- */

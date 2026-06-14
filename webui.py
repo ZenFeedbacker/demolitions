@@ -13,6 +13,7 @@ import json
 import os
 import socket
 import threading
+import time
 import traceback
 import webbrowser
 from datetime import date, datetime
@@ -26,13 +27,15 @@ from zipstream import ZipStream
 from demolitions.areas import AreaError, list_areas, normalize, resolve_area
 from demolitions.diavgeia import session as diavgeia_session
 from demolitions.greek import pretty_area
-from demolitions.pipeline import (CancelledRun, NoPermitsFound,
+from demolitions.pipeline import (CancelledRun, E_ADEIES_START, NoPermitsFound,
                                   enrich_geocode, run_pipeline)
 from demolitions.storage import content_type, make_storage
 
 BASE = Path(__file__).parent
 CACHE_DIR = Path(os.environ.get("DEMOLITIONS_CACHE_DIR", BASE / "cache"))
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
+GITHUB_URL = "https://github.com/ZenFeedbacker/demolitions"
+START_TIME = time.time()
 
 app = Flask(__name__)
 store = make_storage()
@@ -142,7 +145,26 @@ def _start(target, *args, state="running", result=None, run_id=None, meta=None):
 
 @app.get("/")
 def index():
-    return render_template("index.html", today=date.today().isoformat())
+    return render_template("index.html", today=date.today().isoformat(),
+                           start=E_ADEIES_START.isoformat())
+
+
+@app.get("/api/about")
+def api_about():
+    runs = store.list_runs()
+    u = store.usage()
+    return jsonify({
+        "backend": store.kind,
+        "n_runs": len(runs),
+        "n_permits": sum(m.get("n_rows") or 0 for m in runs),
+        "storage_bytes": u["storage_bytes"],
+        "pdf_bytes": u["pdf_bytes"],
+        "pdf_cap": store.pdf_cap,
+        "uptime_seconds": int(time.time() - START_TIME),
+        "version": (os.environ.get("RENDER_GIT_COMMIT") or "")[:7],
+        "github": GITHUB_URL,
+        "data_since": E_ADEIES_START.isoformat(),
+    })
 
 
 @app.get("/api/areas")

@@ -134,6 +134,16 @@ class LocalStorage:
     def enforce_pdf_cap(self, log=lambda m: None):
         pass  # τοπικά δεν περιορίζουμε (ο δίσκος είναι ο δίσκος του χρήστη)
 
+    def usage(self):
+        total = pdf = 0
+        for p in self.runs.rglob("*"):
+            if p.is_file():
+                s = p.stat().st_size
+                total += s
+                if p.suffix == ".pdf":
+                    pdf += s
+        return {"storage_bytes": total, "pdf_bytes": pdf}
+
 
 # --------------------------------------------------------------------------- #
 
@@ -292,6 +302,16 @@ class R2Storage:
                 m["has_pdfs"] = False
                 self.write_manifest(run_id, m)
                 log(f"Εκκαθάριση PDF παλαιότερου run: {run_id}")
+
+    def usage(self):
+        total = pdf = 0
+        paginator = self.s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.bucket, Prefix="runs/"):
+            for o in page.get("Contents", []):
+                total += o["Size"]
+                if "/pdf/" in o["Key"]:
+                    pdf += o["Size"]
+        return {"storage_bytes": total, "pdf_bytes": pdf}
 
 
 # --------------------------------------------------------------------------- #
