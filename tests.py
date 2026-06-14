@@ -669,6 +669,13 @@ class TestWebUI(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertFalse(self.webui.store.exists(self.RID))
 
+    def test_delete_all(self):
+        self.assertTrue(self.webui.store.exists(self.RID))
+        r = self.client.delete("/api/runs")
+        self.assertEqual(r.status_code, 200)
+        self.assertGreaterEqual(r.get_json()["deleted"], 1)
+        self.assertEqual(self.client.get("/api/runs").get_json(), [])
+
     def test_rate_limit_blocks_after_max(self):
         w = self.webui
         with w.rate_lock:

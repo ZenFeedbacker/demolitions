@@ -315,6 +315,20 @@ def api_runs():
     return jsonify(runs)
 
 
+@app.delete("/api/runs")
+def api_delete_all():
+    """Διαγράφει όλα τα run (εκτός από αυτό που τυχόν εκτελείται τώρα)."""
+    with lock:
+        active = job.run_id if job.state in ("running", "geocoding") else None
+    deleted = 0
+    for m in store.list_runs():
+        if m["run_id"] == active:
+            continue
+        store.delete_run(m["run_id"])
+        deleted += 1
+    return jsonify({"ok": True, "deleted": deleted})
+
+
 @app.delete("/api/runs/<run_id>")
 def api_delete_run(run_id):
     with lock:
