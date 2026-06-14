@@ -228,8 +228,12 @@ def api_cancel():
 @app.get("/api/runs")
 def api_runs():
     runs = store.list_runs()
+    sizes = store.sizes_by_run()
     for m in runs:
         m.pop("_mtime", None)
+        s = sizes.get(m["run_id"], {})
+        m["total_bytes"] = s.get("total_bytes", 0)
+        m["pdf_bytes"] = s.get("pdf_bytes", 0)
     active_id = job.run_id if job.state in ("running", "geocoding") else None
     if active_id:
         for m in runs:
@@ -252,6 +256,22 @@ def api_delete_run(run_id):
     if not store.exists(run_id):
         abort(404)
     store.delete_run(run_id)
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/runs/<run_id>/pdfs")
+def api_delete_pdfs(run_id):
+    """Σβήνει μόνο τα PDF του run (κρατά μεταδεδομένα/xlsx) — ελευθερώνει χώρο."""
+    with lock:
+        if job.state in ("running", "geocoding") and job.run_id == run_id:
+            return jsonify({"error": "Το run εκτελείται αυτή τη στιγμή."}), 409
+    if not store.exists(run_id):
+        abort(404)
+    store.delete_pdfs(run_id)
+    m = store.read_manifest(run_id)
+    m.pop("_mtime", None)
+    m["has_pdfs"] = False
+    store.write_manifest(run_id, m)
     return jsonify({"ok": True})
 
 

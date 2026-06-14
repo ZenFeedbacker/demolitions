@@ -144,6 +144,21 @@ class LocalStorage:
                     pdf += s
         return {"storage_bytes": total, "pdf_bytes": pdf}
 
+    def sizes_by_run(self):
+        out = {}
+        for d in self.runs.iterdir():
+            if not (d.is_dir() and (d / "run.json").exists()):
+                continue
+            total = pdf = 0
+            for p in d.rglob("*"):
+                if p.is_file():
+                    s = p.stat().st_size
+                    total += s
+                    if p.suffix == ".pdf":
+                        pdf += s
+            out[d.name] = {"pdf_bytes": pdf, "total_bytes": total}
+        return out
+
 
 # --------------------------------------------------------------------------- #
 
@@ -312,6 +327,20 @@ class R2Storage:
                 if "/pdf/" in o["Key"]:
                     pdf += o["Size"]
         return {"storage_bytes": total, "pdf_bytes": pdf}
+
+    def sizes_by_run(self):
+        out = {}
+        paginator = self.s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.bucket, Prefix="runs/"):
+            for o in page.get("Contents", []):
+                parts = o["Key"].split("/")
+                if len(parts) < 3:
+                    continue
+                e = out.setdefault(parts[1], {"pdf_bytes": 0, "total_bytes": 0})
+                e["total_bytes"] += o["Size"]
+                if "/pdf/" in o["Key"]:
+                    e["pdf_bytes"] += o["Size"]
+        return out
 
 
 # --------------------------------------------------------------------------- #

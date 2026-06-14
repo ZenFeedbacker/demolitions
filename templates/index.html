@@ -82,6 +82,8 @@
           color: #a8231f; border-color: #e0c4bc; background: none;
           border: 1px solid; border-radius: 6px; cursor: pointer; }
   .runcard .del:hover { background: #f8e8e4; }
+  .runcard .cache { color: #9a5b2d; border-color: #e6cdb0; }
+  .runcard .cache:hover { background: #f7ecdf; }
   .tag { background: #e7f0e9; color: #2e6b46; border-radius: 4px; padding: .05rem .4rem;
           font-size: .75rem; }
   .tag.no { background: #f5e9e0; color: #9a5b2d; }
@@ -608,10 +610,15 @@ async function loadHistory() {
           ? "γεωκωδικοποίηση σε εξέλιξη…" : "αναζήτηση σε εξέλιξη…"}</span>`
       : `<span class="tag ${m.geocoded ? "" : "no"}">${m.geocoded
           ? "με συντεταγμένες" : "χωρίς συντεταγμένες"}</span>`;
+    const size = m.total_bytes ? `<span title="χώρος στον δίσκο">${fmtBytes(m.total_bytes)}</span>` : "";
+    const clearBtn = (!m.active && m.has_pdfs && m.pdf_bytes)
+      ? `<button class="del cache">Καθαρισμός PDF (${fmtBytes(m.pdf_bytes)})</button>` : "";
     d.innerHTML = `<b></b><span>${dmy(m.from)} – ${dmy(m.to)}</span>
       <span>${m.n_rows == null ? "—" : m.n_rows + " άδειες"}</span>
       ${status}
+      ${size}
       <span>${dmy(m.created)}</span>
+      ${clearBtn}
       ${m.active ? "" : '<button class="del">Διαγραφή</button>'}`;
     d.querySelector("b").textContent = m.area;
     d.onclick = async () => {
@@ -621,7 +628,18 @@ async function loadHistory() {
       await renderResults($("histresults"), m, false);
     };
     if (m.active) { list.appendChild(d); continue; }
-    d.querySelector(".del").onclick = async e => {
+    const cacheBtn = d.querySelector(".cache");
+    if (cacheBtn) cacheBtn.onclick = async e => {
+      e.stopPropagation();
+      if (!confirm(`Καθαρισμός των PDF του run «${m.area}» (${fmtBytes(m.pdf_bytes)});\n\n` +
+                   `Τα μεταδεδομένα και το Excel μένουν· το zip θα ξαναφτιάχνεται ` +
+                   `κατ' απαίτηση από τη Διαύγεια.`)) return;
+      const r = await fetch(`/api/runs/${encodeURIComponent(m.run_id)}/pdfs`,
+                            { method: "DELETE" });
+      if (!r.ok) alert((await r.json()).error || "Σφάλμα");
+      loadHistory();
+    };
+    d.querySelector(".del:not(.cache)").onclick = async e => {
       e.stopPropagation();
       if (!confirm(`Διαγραφή του run «${m.area}» (${dmy(m.from)} – ${dmy(m.to)});\n\n` +
                    `ΠΡΟΣΟΧΗ: θα διαγραφούν οριστικά και όλα τα αρχεία του ` +
