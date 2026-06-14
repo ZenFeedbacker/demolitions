@@ -10,6 +10,7 @@ import os
 import tempfile
 import unittest
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 CACHE = str(Path(__file__).parent / "cache")
@@ -17,7 +18,7 @@ CACHE = str(Path(__file__).parent / "cache")
 from demolitions.areas import (AreaError, list_areas, municipality_labels,
                                normalize, resolve_area)
 from demolitions.diavgeia import (KIND_KATEDAFISI, KIND_OIKODOMIKI,
-                                  _search_query, permit_kind)
+                                   _search_query, issue_date, permit_kind)
 from demolitions.egsa87 import egsa87_to_wgs84
 from demolitions.geocode import _poli_variants, _strip_dimos
 from demolitions.greek import dimos_display, greek_title, pretty_area
@@ -211,6 +212,16 @@ class TestPermitKind(unittest.TestCase):
         q = _search_query("2024-01-01", "2024-06-30")
         self.assertIn('subject:"Κατεδάφιση"', q)
         self.assertNotIn('subject:"Άδεια Κατεδάφισης"', q)
+
+
+class TestIssueDate(unittest.TestCase):
+    def test_issue_date_uses_greece_timezone(self):
+        ts = int(datetime(2024, 4, 16, 21, 5, 11, tzinfo=timezone.utc).timestamp() * 1000)
+        self.assertEqual(issue_date({"issueDate": ts}).isoformat(), "2024-04-17")
+
+    def test_issue_date_midday_is_stable(self):
+        ts = int(datetime(2024, 4, 16, 12, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)
+        self.assertEqual(issue_date({"issueDate": ts}).isoformat(), "2024-04-16")
 
 
 class TestEgsa87(unittest.TestCase):

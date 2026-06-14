@@ -10,8 +10,9 @@ server-side, οπότε το φιλτράρουμε client-side.
 import json
 import re
 import time
-from datetime import date, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -25,6 +26,7 @@ SEARCH_CACHE_VERSION = "v2"
 KIND_KATEDAFISI = "κατεδάφιση"
 KIND_OIKODOMIKI = "οικοδομική με κατεδάφιση"
 DEMOLITION_RE = re.compile(r"\bΚΑΤΕΔΑΦΙΣ(?:Η|ΗΣ)\b")
+GREECE_TZ = ZoneInfo("Europe/Athens")
 
 
 def permit_kind(subject):
@@ -135,4 +137,4 @@ def search_permits(from_date, to_date, muni_codes, cache_dir, progress=print):
 
 def issue_date(decision):
     """epoch ms -> datetime.date"""
-    return date.fromtimestamp(decision["issueDate"] / 1000)
+    return datetime.fromtimestamp(decision["issueDate"] / 1000, GREECE_TZ).date()
