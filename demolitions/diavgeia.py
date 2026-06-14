@@ -8,6 +8,7 @@ server-side, οπότε το φιλτράρουμε client-side.
 """
 
 import json
+import re
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -19,9 +20,11 @@ from .areas import normalize
 SEARCH_URL = "https://diavgeia.gov.gr/opendata/search/advanced"
 TEE_ORG = "99201077"
 PAGE_SIZE = 500
+SEARCH_CACHE_VERSION = "v2"
 
 KIND_KATEDAFISI = "κατεδάφιση"
 KIND_OIKODOMIKI = "οικοδομική με κατεδάφιση"
+DEMOLITION_RE = re.compile(r"\bΚΑΤΕΔΑΦΙΣ(?:Η|ΗΣ)\b")
 
 
 def permit_kind(subject):
@@ -33,9 +36,10 @@ def permit_kind(subject):
     αποκλείονται και στις δύο περιπτώσεις (το startswith τις κόβει).
     """
     subj = normalize(subject)
+    description = subj.split(":", 1)[1].strip() if ":" in subj else subj
     if subj.startswith("ΑΔΕΙΑ ΚΑΤΕΔΑΦΙΣΗΣ"):
         return KIND_KATEDAFISI
-    if subj.startswith("ΟΙΚΟΔΟΜΙΚΗ ΑΔΕΙΑ") and "ΚΑΤΕΔΑΦΙΣ" in subj:
+    if subj.startswith("ΟΙΚΟΔΟΜΙΚΗ ΑΔΕΙΑ") and DEMOLITION_RE.search(description):
         return KIND_OIKODOMIKI
     return None
 
@@ -52,6 +56,15 @@ def _windows(start, end):
         cur = win_end + timedelta(days=1)
 
 
+def _search_query(win_start, win_end):
+    """Broad retrieval; precise permit filtering happens in permit_kind()."""
+    return (
+        f'organizationUid:"{TEE_ORG}" AND decisionTypeUid:"2.4.6.1" '
+        f'AND subject:"Κατεδάφιση" '
+        f"AND issueDate:[DT({win_start}T00:00:00) TO DT({win_end}T23:59:59)]"
+    )
+
+
 def _fetch_window(win_start, win_end, cache_dir):
     """Όλες οι σελίδες ενός παραθύρου, με cache στο δίσκο."""
     cache = Path(cache_dir) / "search"
@@ -59,15 +72,13 @@ def _fetch_window(win_start, win_end, cache_dir):
     decisions = []
     page = 0
     while True:
-        cache_file = cache / f"{win_start}_{win_end}_p{page}.json"
+        cache_file = cache / (
+            f"{SEARCH_CACHE_VERSION}_{win_start}_{win_end}_p{page}.json"
+        )
         if cache_file.exists():
             data = json.loads(cache_file.read_text(encoding="utf-8"))
         else:
-            q = (
-                f'organizationUid:"{TEE_ORG}" AND decisionTypeUid:"2.4.6.1" '
-                f'AND subject:"Άδεια Κατεδάφισης" '
-                f"AND issueDate:[DT({win_start}T00:00:00) TO DT({win_end}T23:59:59)]"
-            )
+            q = _search_query(win_start, win_end)
             for attempt in range(4):
                 try:
                     r = session.get(

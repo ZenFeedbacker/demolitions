@@ -15,7 +15,8 @@ from pathlib import Path
 CACHE = str(Path(__file__).parent / "cache")
 
 from demolitions.areas import AreaError, list_areas, normalize, resolve_area
-from demolitions.diavgeia import KIND_KATEDAFISI, KIND_OIKODOMIKI, permit_kind
+from demolitions.diavgeia import (KIND_KATEDAFISI, KIND_OIKODOMIKI,
+                                  _search_query, permit_kind)
 from demolitions.egsa87 import egsa87_to_wgs84
 from demolitions.geocode import _poli_variants, _strip_dimos
 from demolitions.greek import dimos_display, greek_title, pretty_area
@@ -183,6 +184,9 @@ class TestPermitKind(unittest.TestCase):
         self.assertEqual(permit_kind(
             "Οικοδομική άδεια Κατηγορίας 1 χωρίς προέγκριση: Κατεδάφιση και "
             "ανέγερση"), KIND_OIKODOMIKI)
+        self.assertEqual(permit_kind(
+            "Οικοδομική Άδεια (ν.4759/2020): ΚΑΤΕΔΑΦΙΣΗ BARBECUE, ΑΝΕΓΕΡΣΗ ΝΕΑΣ "
+            "ΙΣΟΓΕΙΟΥ ΟΙΚΟΔΟΜΗΣ"), KIND_OIKODOMIKI)
 
     def test_aporriptontai(self):
         for s in ("Προέγκριση Άδειας Κατεδάφισης: ...",
@@ -190,8 +194,15 @@ class TestPermitKind(unittest.TestCase):
                   "Ενημέρωση Οικοδομικής Άδειας: ΚΑΤΕΔΑΦΙΣΗ ...",
                   "Προέγκριση Οικοδομικής Άδειας: ΚΑΤΕΔΑΦΙΣΗ ...",
                   "Οικοδομική Άδεια (ν.4759/2020): ΑΝΕΓΕΡΣΗ ΚΑΤΟΙΚΙΑΣ",
+                  "Οικοδομική Άδεια (ν.4759/2020): ΚΑΤΑΣΚΕΥΗ ΜΟΝΑΔΑΣ "
+                  "ΔΙΑΧΕΙΡΙΣΗΣ ΑΠΟΒΛΗΤΩΝ ΕΚΣΚΑΦΩΝ, ΚΑΤΑΣΚΕΥΩΝ ΚΑΙ ΚΑΤΕΔΑΦΙΣΕΩΝ",
                   "Έγκριση Εκτέλεσης Εργασιών: ΚΑΤΕΔΑΦΙΣΗ ΕΠΙΚΙΝΔΥΝΟΥ"):
             self.assertIsNone(permit_kind(s), s)
+
+    def test_search_query_is_broad_enough_for_bundled_permits(self):
+        q = _search_query("2024-01-01", "2024-06-30")
+        self.assertIn('subject:"Κατεδάφιση"', q)
+        self.assertNotIn('subject:"Άδεια Κατεδάφισης"', q)
 
 
 class TestEgsa87(unittest.TestCase):
