@@ -146,6 +146,23 @@ def detect_extent(description_norm):
     return "ολική"
 
 
+# μη-κτίσματα: τοιχία, μάντρες, περιφράξεις, πισίνες, δεξαμενές, καμινάδες…
+NONBUILDING_RE = re.compile(
+    r"ΤΟΙΧΙ|ΤΟΙΧΟ|ΜΑΝΤΡΟΤΟΙΧ|ΜΑΝΤΡΑ|ΜΑΝΔΡΑ|ΠΕΡΙΦΡΑΞ|ΠΕΡΙΤΟΙΧ|ΠΕΡΙΒΟΛ|"
+    r"ΚΟΛΥΜΒΗΤΙΚ|ΠΙΣΙΝΑ|ΔΕΞΑΜΕΝ|ΚΑΜΙΝΑΔ")
+# αν αναφέρεται κτίριο/κατοικία, ΔΕΝ είναι «μη κτίσμα» (π.χ. «κατοικία και
+# περίφραξη»)· οι τύποι ορόφων υποδηλώνουν κτίριο
+BUILDING_RE = re.compile(
+    r"ΚΑΤΟΙΚΙ|ΟΙΚΙΑ|ΚΤΙΡΙ|ΚΤΙΣΜ|ΟΙΚΟΔΟΜ|ΔΙΑΜΕΡΙΣΜ|ΑΠΟΘΗΚ|ΚΑΤΑΣΤΗΜ|ΞΕΝΟΔΟΧ|"
+    r"ΒΙΟΜΗΧΑΝ|ΒΙΟΤΕΧΝ|ΠΟΛΥΚΑΤΟΙΚ|ΜΕΖΟΝΕΤ|ΣΤΑΒΛ|ΟΡΟΦ|ΩΡΟΦ|ΙΣΟΓΕΙ")
+
+
+def is_nonbuilding(description_norm):
+    """True αν η άδεια αφορά μη-κτίσμα (τοιχίο/περίφραξη/πισίνα…) και όχι κτίριο."""
+    return bool(NONBUILDING_RE.search(description_norm)
+                and not BUILDING_RE.search(description_norm))
+
+
 def detect_floors(description_norm):
     """Μέγιστος αριθμός ορόφων που αναφέρεται στην (κανονικοποιημένη) περιγραφή."""
     floors = [n for pat, n in FLOOR_PATTERNS if re.search(pat, description_norm)]
@@ -194,4 +211,5 @@ def parse_decision(decision, cache_dir):
     desc_norm = normalize(row["perigrafi"])
     row["orofoi"] = detect_floors(desc_norm)
     row["ektasi"] = detect_extent(desc_norm)
+    row["nonbuilding"] = is_nonbuilding(desc_norm)
     return row

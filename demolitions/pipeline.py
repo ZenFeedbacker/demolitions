@@ -97,14 +97,18 @@ def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
         row["dimos"] = muni_labels[muni_code]["display"]
         row["dimos_query"] = muni_labels[muni_code]["geocode"]
         row["eidos"] = permit_kind(d.get("subject", "")) or KIND_KATEDAFISI
-        row["flags"] = ""
+        flags = []
         # ίδιο κτίσμα με >1 τελικές άδειες (επανεκδόσεις) — συχνό φαινόμενο
         key = (muni_code,
                normalize(row["perigrafi"]), normalize(row["odos"]),
                row["ar_apo"])
         if row["perigrafi"] and key in seen_building:
-            row["flags"] = "πιθανό διπλό"
+            flags.append("πιθανό διπλό")
         seen_building.add(key)
+        # τοιχίο/περίφραξη/πισίνα κ.λπ. — δεν είναι απώλεια κτίσματος
+        if row.get("nonbuilding"):
+            flags.append("μη κτίσμα")
+        row["flags"] = "; ".join(flags)
         rows.append(row)
         if i % 25 == 0 or i == len(decisions):
             ok = sum(1 for r in rows if r["parse_ok"])

@@ -24,7 +24,7 @@ from demolitions.geocode import _poli_variants, _strip_dimos
 from demolitions.greek import dimos_display, greek_title, pretty_area
 from demolitions.output import COLUMNS, write_xlsx
 from demolitions.pdfparse import (_clean, _pdf_url, detect_extent, detect_floors,
-                                   extract_polygon, parse_fields)
+                                   extract_polygon, is_nonbuilding, parse_fields)
 
 
 class TestNormalize(unittest.TestCase):
@@ -133,6 +133,21 @@ class TestDetectFloors(unittest.TestCase):
     def test_cases(self):
         for desc, want in self.CASES:
             self.assertEqual(detect_floors(normalize(desc)), want, desc)
+
+
+class TestNonBuilding(unittest.TestCase):
+    def test_walls_fences_etc(self):
+        for desc in ("ΚΑΤΕΔΑΦΙΣΗ ΤΟΙΧΙΟΥ", "ΚΑΤΕΔΑΦΙΣΗ ΜΑΝΤΡΟΤΟΙΧΟΥ",
+                     "ΚΑΤΕΔΑΦΙΣΗ ΠΕΡΙΦΡΑΞΗΣ ΟΙΚΟΠΕΔΟΥ",
+                     "ΚΑΤΕΔΑΦΙΣΗ ΚΟΛΥΜΒΗΤΙΚΗΣ ΔΕΞΑΜΕΝΗΣ"):
+            self.assertTrue(is_nonbuilding(normalize(desc)), desc)
+
+    def test_buildings_not_flagged(self):
+        for desc in ("ΚΑΤΕΔΑΦΙΣΗ ΔΙΩΡΟΦΗΣ ΚΑΤΟΙΚΙΑΣ",
+                     "ΚΑΤΕΔΑΦΙΣΗ ΙΣΟΓΕΙΑΣ ΑΠΟΘΗΚΗΣ",
+                     "ΚΑΤΕΔΑΦΙΣΗ ΚΑΤΟΙΚΙΑΣ ΚΑΙ ΠΕΡΙΦΡΑΞΗΣ",   # έχει κτίριο
+                     "ΚΑΤΕΔΑΦΙΣΗ ΚΤΙΡΙΟΥ"):
+            self.assertFalse(is_nonbuilding(normalize(desc)), desc)
 
 
 class TestDetectExtent(unittest.TestCase):

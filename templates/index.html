@@ -438,7 +438,8 @@ function addMapToggle(box, rows, runId) {
         `<b>${esc(dmy(r.date))}</b> — ${esc([addr, r.poli].filter(Boolean).join(", "))}<br>` +
         `${esc(r.dimos)}${r.orofoi ? ` · ${esc(r.orofoi)} όροφοι` : ""}` +
         `${r.eidos && r.eidos !== "κατεδάφιση" ? ` · ${esc(r.eidos)}` : ""}` +
-        `${r.ektasi === "τμηματική/μερική" ? " · τμηματική/μερική" : ""}<br>` +
+        `${r.ektasi === "τμηματική/μερική" ? " · τμηματική/μερική" : ""}` +
+        `${r.nonbuilding ? " · μη κτίσμα" : ""}<br>` +
         `${esc(r.perigrafi)}<br>` +
         `<a href="https://diavgeia.gov.gr/decision/view/${esc(r.ada)}" target="_blank">${esc(r.ada)}</a>` +
         (r.pdf_path ? ` · <a href="/runs/${esc(runId)}/${esc(r.pdf_path)}" target="_blank">PDF</a>` : "") +
@@ -552,6 +553,9 @@ function buildTable(rows, runId) {
       <select class="fektasi"><option value="">Ολικές και τμηματικές</option>
         <option value="ολική">Μόνο ολικές</option>
         <option value="τμηματική/μερική">Μόνο τμηματικές/μερικές</option></select>
+      <select class="fktisma"><option value="">Κτίρια και μη</option>
+        <option value="build">Μόνο κτίρια</option>
+        <option value="non">Μόνο μη-κτίρια (τοιχία/περιφράξεις)</option></select>
       <select class="forofoi"><option value="">Όλοι οι όροφοι</option></select>
       <select class="fdup"><option value="">Όλες οι εγγραφές</option>
         <option value="clean">Χωρίς πιθανά διπλά</option></select>
@@ -565,10 +569,12 @@ function buildTable(rows, runId) {
   const fo = box.querySelector(".forofoi");
   for (const o of orofoi) fo.add(new Option(o, o));
   const fx = box.querySelector(".fektasi");
+  const fk = box.querySelector(".fktisma");
   if (dimoi.length < 2) fd.classList.add("hidden");
   if (eidi.length < 2) fe.classList.add("hidden");
   if (new Set(rows.map(r => r.ektasi || "ολική")).size < 2)
     fx.classList.add("hidden");
+  if (!rows.some(r => r.nonbuilding)) fk.classList.add("hidden");
 
   const tr = box.querySelector("thead tr");
   let sortKey = 0, sortDir = 1;
@@ -582,11 +588,12 @@ function buildTable(rows, runId) {
   function redraw() {
     const q = norm(box.querySelector(".ftext").value);
     const dim = fd.value, oro = fo.value, dup = box.querySelector(".fdup").value;
-    const eid = fe.value, ekt = fx.value;
+    const eid = fe.value, ekt = fx.value, ktisma = fk.value;
     let view = rows.filter(r =>
       (!dim || r.dimos === dim) &&
       (!eid || (r.eidos || "κατεδάφιση") === eid) &&
       (!ekt || (r.ektasi || "ολική") === ekt) &&
+      (!ktisma || (ktisma === "build" ? !r.nonbuilding : !!r.nonbuilding)) &&
       (!oro || String(r.orofoi) === oro) &&
       (!dup || !(r.flags || "").includes("πιθανό διπλό")) &&
       (!q || norm([r.odos, r.poli, r.perigrafi, r.dim_enotita, r.ada].join(" ")).includes(q)));
