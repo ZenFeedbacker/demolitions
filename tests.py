@@ -376,10 +376,13 @@ class TestOutput(unittest.TestCase):
             self.assertEqual(ws.cell(2, col["ada"]).hyperlink.target,
                              "https://diavgeia.gov.gr/decision/view/ΑΔΑ1")
             self.assertEqual(ws.cell(2, col["date"]).number_format, "DD/MM/YYYY")
+            # η στήλη PDF δείχνει στη Διαύγεια (προβολή), ποτέ τοπική διαδρομή
             self.assertEqual(ws.cell(2, col["pdf_path"]).hyperlink.target,
-                             "pdf/Δήμος Δράμας/2021/ΑΔΑ1.pdf")
-            self.assertIsNone(ws.cell(3, col["pdf_path"]).hyperlink)  # χωρίς PDF
+                             "https://diavgeia.gov.gr/doc/ΑΔΑ1?inline=true")
+            self.assertEqual(ws.cell(3, col["pdf_path"]).hyperlink.target,
+                             "https://diavgeia.gov.gr/doc/ΑΔΑ2?inline=true")
             self.assertEqual(ws.cell(3, col["parse_ok"]).value, "ΟΧΙ")
+            self.assertEqual(wb.properties.creator, "demolitions")
             pivot = wb["Ανά έτος-δήμο"]
             self.assertEqual(pivot.cell(1, 2).value, "Δήμος Δράμας")
             self.assertEqual(pivot.cell(4, 4).value, 2)      # γενικό σύνολο

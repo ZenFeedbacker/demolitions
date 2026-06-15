@@ -34,6 +34,9 @@ COLUMNS = [
 
 def write_xlsx(rows, out_path):
     wb = Workbook()
+    # σταθερά μεταδεδομένα — να μη διαρρέει όνομα χρήστη/περιβάλλοντος
+    wb.properties.creator = "demolitions"
+    wb.properties.lastModifiedBy = "demolitions"
 
     ws = wb.active
     ws.title = "Κατεδαφίσεις"
@@ -50,11 +53,11 @@ def write_xlsx(rows, out_path):
             elif key == "date":
                 value = date.fromisoformat(value)
             if key == "pdf_path":
-                cell = ws.cell(row=r, column=col,
-                               value="PDF" if value else "")
-                if value:
-                    cell.hyperlink = value  # σχετική διαδρομή δίπλα στο xlsx
-                    cell.font = Font(color="0563C1", underline="single")
+                # σύνδεσμος στο PDF της Διαύγειας (προβολή, όχι λήψη)· ποτέ
+                # τοπική διαδρομή — το xlsx μοιράζεται/ανεβαίνει αυτόνομα
+                cell = ws.cell(row=r, column=col, value="PDF")
+                cell.hyperlink = f"https://diavgeia.gov.gr/doc/{row['ada']}?inline=true"
+                cell.font = Font(color="0563C1", underline="single")
                 continue
             cell = ws.cell(row=r, column=col, value=value)
             if key == "date":

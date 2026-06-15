@@ -442,7 +442,7 @@ function addMapToggle(box, rows, runId) {
         `${r.nonbuilding ? " · μη κτίσμα" : ""}<br>` +
         `${esc(r.perigrafi)}<br>` +
         `<a href="https://diavgeia.gov.gr/decision/view/${esc(r.ada)}" target="_blank">${esc(r.ada)}</a>` +
-        (r.pdf_path ? ` · <a href="/runs/${esc(runId)}/${esc(r.pdf_path)}" target="_blank">PDF</a>` : "") +
+        ` · <a href="https://diavgeia.gov.gr/doc/${esc(r.ada)}?inline=true" target="_blank">PDF</a>` +
         ` · <a href="https://www.openstreetmap.org/?mlat=${r.lat}&mlon=${r.lon}#map=18/${r.lat}/${r.lon}" target="_blank">OSM</a>` +
         ` · <span style="color:${PREC_COLORS[r.precision] || "#8a8273"}">${esc(r.precision)}</span>`);
       if (r.poly && r.poly.length >= 3) {   // περίγραμμα κτίσματος από το PDF
@@ -536,8 +536,8 @@ const COLS = [
     r => r.lat != null ? 1 : 0, "map"],
   ["ΑΔΑ", r => r.ada, null,
     r => `https://diavgeia.gov.gr/decision/view/${r.ada}`],
-  ["PDF", r => r.pdf_path ? "PDF" : "", null,
-    (r, runId) => r.pdf_path ? `/runs/${runId}/${r.pdf_path}` : null],
+  ["PDF", r => "PDF", null,
+    r => `https://diavgeia.gov.gr/doc/${r.ada}?inline=true`],
   ["Έλεγχος", r => r.flags],
 ];
 
