@@ -8,3 +8,5 @@ __pycache__/
 /σύγκριση*/
 .env
 runs/
+.idea/
+.vscode/
