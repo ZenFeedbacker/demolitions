@@ -634,6 +634,24 @@ class TestWebUI(unittest.TestCase):
         self.assertTrue(any(n.endswith(".xlsx") for n in names))
         self.assertTrue(any(n.endswith(".pdf") for n in names))
 
+    def test_zip_opens_members_lazily(self):
+        # τα μέλη (xlsx/PDF) ΔΕΝ πρέπει να ανοίγονται κατά την κατασκευή της
+        # απόκρισης — αλλιώς N round-trips πριν το πρώτο byte (-> 502 hosted)
+        w = self.webui
+        calls = []
+        orig = w.store.open_member
+        w.store.open_member = lambda rid, rel: (calls.append(rel) or orig(rid, rel))
+        try:
+            with w.app.test_request_context():
+                resp = w.serve_zip(self.RID)
+                self.assertEqual(calls, ["rows.json"])   # μόνο αυτό κατά την κατασκευή
+                body = b"".join(resp.response)            # τώρα streamάρει
+            self.assertIn(self.RID + ".xlsx", calls)      # ανοίχτηκε κατά το stream
+            self.assertTrue(any(c.endswith(".pdf") for c in calls))
+            self.assertTrue(zipfile.ZipFile(io.BytesIO(body)).namelist())
+        finally:
+            w.store.open_member = orig
+
     def test_zip_rate_limit(self):
         self.webui.RATE_LIMIT_WINDOW_SECONDS = 3600
         self.webui.RATE_LIMIT_MAX_REQUESTS = 1

@@ -417,6 +417,16 @@ def _diavgeia_pdf(ada):
         return
 
 
+def _zip_member(run_id, arc):
+    """Lazy: ανοίγει το αρχείο (στο R2: get_object) μόνο όταν φτάσει η σειρά
+    του στο stream. Αλλιώς θα ανοίγαμε δεκάδες συνδέσεις/round-trips ΠΡΙΝ
+    σταλεί το πρώτο byte — ο proxy κάνει timeout (502) και κρατάμε πολλές
+    ανοιχτές συνδέσεις ταυτόχρονα."""
+    m = store.open_member(run_id, arc)
+    if m:
+        yield from m[0]
+
+
 @app.get("/zip/<run_id>.zip")
 def serve_zip(run_id):
     if not store.exists(run_id):
@@ -427,18 +437,14 @@ def serve_zip(run_id):
 
     zs = ZipStream()
     xlsx = f"{run_id}.xlsx"
-    xm = store.open_member(run_id, xlsx)
-    if xm:
-        zs.add(data=xm[0], arcname=xlsx)
+    zs.add(data=_zip_member(run_id, xlsx), arcname=xlsx)
     cached = manifest.get("has_pdfs")
     for r in rows:
         arc = r.get("pdf_path")
         if not arc:
             continue
-        if cached:                                  # από την αποθήκη (γρήγορο)
-            m = store.open_member(run_id, arc)
-            if m:
-                zs.add(data=m[0], arcname=arc)
+        if cached:                                  # από την αποθήκη (lazy)
+            zs.add(data=_zip_member(run_id, arc), arcname=arc)
         elif r.get("ada"):                           # κατ' απαίτηση από Διαύγεια
             zs.add(data=_diavgeia_pdf(r["ada"]), arcname=arc)
     return Response(zs, mimetype="application/zip",
