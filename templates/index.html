@@ -365,14 +365,18 @@ async function renderResults(container, manifest, geocodingNow) {
   }
   container.innerHTML = "";
   const h = document.createElement("div");
+  // φτιάχνουμε τα URL από το run_id (πάντα παρόν) — όχι από manifest.xlsx_url/
+  // zip_url, που τα ορίζει μόνο το _result_payload· τα run του ιστορικού
+  // (/api/runs) δεν τα έχουν, οπότε ο σύνδεσμος έβγαζε «/undefined» -> 404
+  const rid = encodeURIComponent(manifest.run_id);
   const dupNote = manifest.n_dups
     ? ` — ${manifest.n_dups} πιθανά διπλά (στήλη «Έλεγχος»)` : "";
   h.innerHTML = `<h2 style="margin:.2rem 0"></h2>
     <div class="note">${dmy(manifest.from)} έως ${dmy(manifest.to)} ·
       <b>${manifest.n_rows}</b> άδειες${dupNote}</div>
     <div class="dl">
-      <a class="btn" href="${manifest.xlsx_url}">Λήψη Excel</a>
-      <a class="btn alt" href="${manifest.zip_url}">Λήψη όλων (zip)</a>
+      <a class="btn" href="/runs/${rid}/${rid}.xlsx">Λήψη Excel</a>
+      <a class="btn alt" href="/zip/${rid}.zip">Λήψη όλων (zip)</a>
     </div>`;
   h.querySelector("h2").textContent = manifest.area;
   if (!manifest.geocoded && !geocodingNow) {

@@ -855,6 +855,15 @@ class TestWebUI(unittest.TestCase):
         self.assertIn(b'value="2018-10-01"', r.data)   # default «Από»
         self.assertGreater(len(self.client.get("/api/areas").get_json()), 300)
 
+    def test_download_links_derived_from_run_id(self):
+        # zip/xlsx σύνδεσμοι χτίζονται από το run_id (δουλεύουν και στο
+        # ιστορικό)· όχι από manifest.zip_url που λείπει εκεί -> «/undefined»
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn("/zip/${rid}.zip", html)
+        self.assertIn("/runs/${rid}/${rid}.xlsx", html)
+        self.assertNotIn("${manifest.zip_url}", html)
+        self.assertNotIn("${manifest.xlsx_url}", html)
+
     def test_healthz(self):
         r = self.client.get("/healthz")
         self.assertEqual(r.status_code, 200)
