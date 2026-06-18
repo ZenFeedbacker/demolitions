@@ -501,6 +501,38 @@ class TestRunPipelinePdfCallback(unittest.TestCase):
             self.assertEqual(result.rows[0]["pdf_path"],
                              "pdf/Δήμος Δράμας/2021/ΑΔΑ0.pdf")
 
+    def test_pdf_staged_during_download_phase_not_after(self):
+        """Η αντιγραφή/ανέβασμα γίνεται ΜΕΣΑ στη φάση download (overlap), όχι
+        σε χωριστό δεύτερο loop — αλλιώς χάνεται η επικάλυψη upload/download."""
+        from unittest import mock
+        from demolitions import pipeline
+        from datetime import date as _date
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp) / "cache"
+            (cache_dir / "pdf").mkdir(parents=True)
+            decisions = [self._decision(i) for i in range(3)]
+            for i in range(3):
+                (cache_dir / "pdf" / f"ΑΔΑ{i}.pdf").write_bytes(b"%PDF-1.4 x")
+            events = []
+
+            def parse(d, c):
+                events.append(("parse", d["ada"]))
+                return self._fake_parse(d, c)
+
+            with mock.patch.object(pipeline, "search_permits", return_value=decisions), \
+                 mock.patch.object(pipeline, "parse_decision", side_effect=parse):
+                pipeline.run_pipeline(
+                    "Δήμος Δράμας", _date(2021, 1, 1), _date(2021, 12, 31),
+                    Path(tmp) / "run", cache_dir=cache_dir, log=lambda m: None,
+                    pdf_callback=lambda dest, rel: events.append(
+                        ("upload", Path(dest).stem)))
+
+            first_upload = next(k for k, e in enumerate(events) if e[0] == "upload")
+            last_parse = max(k for k, e in enumerate(events) if e[0] == "parse")
+            # το πρώτο ανέβασμα πρέπει να συμβεί ΠΡΙΝ τελειώσουν όλα τα parse
+            self.assertLess(first_upload, last_parse,
+                            f"χωρίς overlap upload/download: {events}")
+
     def test_size_estimate_logged(self):
         with tempfile.TemporaryDirectory() as tmp:
             logs = []

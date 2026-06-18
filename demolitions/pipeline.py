@@ -46,6 +46,25 @@ def _check(cancel):
         raise CancelledRun()
 
 
+def _stage_pdf(ada, dimos, year, cache_dir, run_dir, pdf_root, pdf_callback):
+    """Αντιγράφει το PDF μιας άδειας στο run_dir και ειδοποιεί τον callback
+    (που το ανεβάζει). Καλείται μέσα στη φάση download ώστε το ανέβασμα να
+    επικαλύπτεται με το επόμενο κατέβασμα. Επιστρέφει το σχετικό path ή "".
+    """
+    src = Path(cache_dir) / "pdf" / f"{ada}.pdf"
+    if not src.exists():
+        return ""
+    dest_dir = pdf_root / dimos / str(year)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / f"{ada}.pdf"
+    rel = str(dest.relative_to(run_dir))
+    if not dest.exists():
+        shutil.copy2(src, dest)
+        if pdf_callback:
+            pdf_callback(dest, rel)
+    return rel
+
+
 def _write_run_files(run_dir, rows, manifest):
     write_xlsx(rows, run_dir / (run_dir.name + ".xlsx"))
     (run_dir / "rows.json").write_text(
@@ -84,9 +103,16 @@ def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
     if not decisions:
         raise NoPermitsFound("Καμία άδεια στο διάστημα/περιοχή.")
 
+    # κάθε run = ένας φάκελος με το spreadsheet και υποφάκελο pdf/<δήμος>/<έτος>/
+    out = Path(out_dir)
+    run_dir = out.with_suffix("") if out.suffix == ".xlsx" else out
+    run_dir.mkdir(parents=True, exist_ok=True)
+    pdf_root = run_dir / "pdf"
+
     log("Κατέβασμα και ανάλυση PDF…")
     rows = []
     seen_building = set()
+    copied = 0
     for i, d in enumerate(decisions, 1):
         _check(cancel)
         if step:
@@ -112,6 +138,12 @@ def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
         if row.get("nonbuilding"):
             flags.append("μη κτίσμα")
         row["flags"] = "; ".join(flags)
+        # το PDF αντιγράφεται/ανεβαίνει εδώ (όχι σε δεύτερο loop) ώστε το
+        # ανέβασμα να τρέχει παράλληλα με το επόμενο download
+        row["pdf_path"] = _stage_pdf(row["ada"], row["dimos"], row["year"],
+                                     cache_dir, run_dir, pdf_root, pdf_callback)
+        if row["pdf_path"]:
+            copied += 1
         rows.append(row)
         if i % 25 == 0 or i == len(decisions):
             ok = sum(1 for r in rows if r["parse_ok"])
@@ -119,28 +151,6 @@ def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
     n_dups = sum(1 for r in rows if r["flags"])
     if n_dups:
         log(f"  Σημειώθηκαν {n_dups} πιθανά διπλά (ίδιος δήμος/διεύθυνση/περιγραφή).")
-
-    # κάθε run = ένας φάκελος με το spreadsheet και υποφάκελο pdf/<δήμος>/<έτος>/
-    out = Path(out_dir)
-    run_dir = out.with_suffix("") if out.suffix == ".xlsx" else out
-    run_dir.mkdir(parents=True, exist_ok=True)
-    pdf_root = run_dir / "pdf"
-    copied = 0
-    for row in rows:
-        _check(cancel)
-        src = Path(cache_dir) / "pdf" / f"{row['ada']}.pdf"
-        if not src.exists():
-            row["pdf_path"] = ""
-            continue
-        dest_dir = pdf_root / row["dimos"] / str(row["year"])
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / f"{row['ada']}.pdf"
-        if not dest.exists():
-            shutil.copy2(src, dest)
-            copied += 1
-            if pdf_callback:
-                pdf_callback(dest, str(dest.relative_to(run_dir)))
-        row["pdf_path"] = str(dest.relative_to(run_dir))
     log(f"PDF: {pdf_root}/ (αντιγράφηκαν {copied})")
 
     manifest = {

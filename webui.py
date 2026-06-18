@@ -16,6 +16,7 @@ import threading
 import time
 import traceback
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -138,13 +139,26 @@ def limit_expensive_routes():
 def _run_worker(j, area, from_date, to_date, run_id):
     try:
         staging = store.staging_dir(run_id)
+        # κάθε PDF ανεβαίνει σε background ώστε το ανέβασμα (~0,1δ) να
+        # επικαλύπτεται με το επόμενο κατέβασμα από τη Διαύγεια (~1δ). Λίγοι
+        # workers αρκούν: τα PDF φτάνουν ένα-ένα, πιο αργά απ' ό,τι ανεβαίνουν.
+        uploads = []
+        pool = ThreadPoolExecutor(max_workers=4)
 
         def on_pdf(local_path, relpath):
-            store.upload_pdf_immediate(run_id, relpath, local_path)
+            uploads.append(pool.submit(
+                store.upload_pdf_immediate, run_id, relpath, local_path))
 
-        run_pipeline(area, from_date, to_date, staging, cache_dir=CACHE_DIR,
-                     log=j.append, step=j.step, cancel=j.cancel_event.is_set,
-                     pdf_callback=on_pdf)
+        try:
+            run_pipeline(area, from_date, to_date, staging, cache_dir=CACHE_DIR,
+                         log=j.append, step=j.step, cancel=j.cancel_event.is_set,
+                         pdf_callback=on_pdf)
+            for f in uploads:        # να ολοκληρωθούν ΟΛΑ πριν το save_run (που
+                f.result()           # ανεβάζει το run.json τελευταίο) — αναδίδει
+                                     # τυχόν σφάλμα ανεβάσματος ώστε το run να μη
+                                     # «εμφανιστεί» με PDF που λείπουν
+        finally:
+            pool.shutdown(wait=True)
         j.append("Αποθήκευση αρχείων…")
         store.save_run(run_id, progress=lambda i, n: j.step("upload", i, n))
         store.free_local_pdfs(run_id)
