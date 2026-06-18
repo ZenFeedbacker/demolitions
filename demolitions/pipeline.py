@@ -46,10 +46,15 @@ def _check(cancel):
         raise CancelledRun()
 
 
-def _stage_pdf(ada, dimos, year, cache_dir, run_dir, pdf_root, pdf_callback):
+def _stage_pdf(ada, dimos, year, cache_dir, run_dir, pdf_root, pdf_callback,
+               free_cache=False):
     """Αντιγράφει το PDF μιας άδειας στο run_dir και ειδοποιεί τον callback
     (που το ανεβάζει). Καλείται μέσα στη φάση download ώστε το ανέβασμα να
     επικαλύπτεται με το επόμενο κατέβασμα. Επιστρέφει το σχετικό path ή "".
+
+    Με `free_cache=True` (hosted/R2) σβήνει και το αντίγραφο της cache μόλις
+    αντιγραφεί στο staging — αλλιώς στον εφήμερο δίσκο του host συσσωρεύονται
+    όλα τα PDF του run (η cache δεν επιβιώνει ούτως ή άλλως ένα spin-down).
     """
     src = Path(cache_dir) / "pdf" / f"{ada}.pdf"
     if not src.exists():
@@ -62,6 +67,8 @@ def _stage_pdf(ada, dimos, year, cache_dir, run_dir, pdf_root, pdf_callback):
         shutil.copy2(src, dest)
         if pdf_callback:
             pdf_callback(dest, rel)
+    if free_cache:
+        src.unlink(missing_ok=True)
     return rel
 
 
@@ -74,7 +81,8 @@ def _write_run_files(run_dir, rows, manifest):
 
 
 def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
-                 log=print, step=None, cancel=None, pdf_callback=None):
+                 log=print, step=None, cancel=None, pdf_callback=None,
+                 free_cache=False):
     """Αναζήτηση + PDF + xlsx (χωρίς συντεταγμένες). Επιστρέφει RunResult."""
     if from_date < E_ADEIES_START:
         log(f"Προσοχή: το e-Άδειες ξεκίνησε τον 10/2018· πριν από "
@@ -141,7 +149,8 @@ def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
         # το PDF αντιγράφεται/ανεβαίνει εδώ (όχι σε δεύτερο loop) ώστε το
         # ανέβασμα να τρέχει παράλληλα με το επόμενο download
         row["pdf_path"] = _stage_pdf(row["ada"], row["dimos"], row["year"],
-                                     cache_dir, run_dir, pdf_root, pdf_callback)
+                                     cache_dir, run_dir, pdf_root, pdf_callback,
+                                     free_cache=free_cache)
         if row["pdf_path"]:
             copied += 1
         rows.append(row)

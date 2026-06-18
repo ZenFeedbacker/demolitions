@@ -15,6 +15,7 @@ import socket
 import threading
 import time
 import traceback
+import urllib.request
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
@@ -43,6 +44,12 @@ RATE_LIMIT_WINDOW_SECONDS = int(
 RATE_LIMIT_MAX_REQUESTS = int(
     os.environ.get("DEMOLITIONS_RATE_LIMIT_MAX_REQUESTS", "12")
 )
+# Το Render free «κοιμίζει» το instance μετά από ~15' χωρίς εισερχόμενα
+# αιτήματα — και θα σκότωνε το background thread στη μέση μιας μεγάλης
+# αναζήτησης (η CPU δραστηριότητα ΔΕΝ μετράει, μόνο εισερχόμενα αιτήματα).
+# Όσο τρέχει ένα job χτυπάμε μόνοι μας τη δημόσια διεύθυνση. Τοπικά (χωρίς
+# RENDER_EXTERNAL_URL) δεν γίνεται τίποτα.
+KEEPALIVE_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
 app = Flask(__name__)
 store = make_storage()
@@ -136,6 +143,22 @@ def limit_expensive_routes():
     }), 429, headers
 
 
+def _keepalive_loop(j):
+    """Κρατά ξύπνιο το instance όσο τρέχει το job `j` (βλ. KEEPALIVE_URL)."""
+    if not KEEPALIVE_URL:
+        return
+    url = KEEPALIVE_URL.rstrip("/") + "/healthz"
+    while j.state in ("running", "geocoding"):
+        try:
+            urllib.request.urlopen(url, timeout=10).close()
+        except Exception:
+            pass
+        for _ in range(50):          # ~4 λεπτά, αρκετά κάτω από το όριο των 15'
+            if j.state not in ("running", "geocoding"):
+                return
+            time.sleep(5)
+
+
 def _run_worker(j, area, from_date, to_date, run_id):
     try:
         staging = store.staging_dir(run_id)
@@ -152,7 +175,7 @@ def _run_worker(j, area, from_date, to_date, run_id):
         try:
             run_pipeline(area, from_date, to_date, staging, cache_dir=CACHE_DIR,
                          log=j.append, step=j.step, cancel=j.cancel_event.is_set,
-                         pdf_callback=on_pdf)
+                         pdf_callback=on_pdf, free_cache=(store.kind == "r2"))
             for f in uploads:        # να ολοκληρωθούν ΟΛΑ πριν το save_run (που
                 f.result()           # ανεβάζει το run.json τελευταίο) — αναδίδει
                                      # τυχόν σφάλμα ανεβάσματος ώστε το run να μη
@@ -219,6 +242,9 @@ def _start(target, *args, state="running", result=None, run_id=None, meta=None):
         job.run_id = run_id
         job.meta = meta or {}
         threading.Thread(target=target, args=(job,) + args, daemon=True).start()
+        if KEEPALIVE_URL:
+            threading.Thread(target=_keepalive_loop, args=(job,),
+                             daemon=True).start()
         return True
 
 

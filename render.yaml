@@ -15,6 +15,8 @@ services:
         value: "60"
       - key: DEMOLITIONS_RATE_LIMIT_MAX_REQUESTS
         value: "12"
+      # RENDER_EXTERNAL_URL το ορίζει αυτόματα το Render· το χρησιμοποιεί το
+      # keep-alive ώστε να μη «κοιμηθεί» το instance στη μέση μεγάλης αναζήτησης
       - key: R2_BUCKET
         sync: false
       - key: R2_ACCOUNT_ID

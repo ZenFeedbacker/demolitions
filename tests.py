@@ -533,6 +533,47 @@ class TestRunPipelinePdfCallback(unittest.TestCase):
             self.assertLess(first_upload, last_parse,
                             f"χωρίς overlap upload/download: {events}")
 
+    def test_free_cache_deletes_cache_copy_after_staging(self):
+        """Με free_cache=True (hosted) το PDF σβήνεται από την cache μόλις
+        ανέβει — αλλιώς ο εφήμερος δίσκος γεμίζει με όλα τα PDF του run."""
+        from unittest import mock
+        from demolitions import pipeline
+        from datetime import date as _date
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp) / "cache"
+            (cache_dir / "pdf").mkdir(parents=True)
+            (cache_dir / "pdf" / "ΑΔΑ0.pdf").write_bytes(b"%PDF-1.4 x")
+            with mock.patch.object(pipeline, "search_permits",
+                                   return_value=[self._decision(0)]), \
+                 mock.patch.object(pipeline, "parse_decision",
+                                   side_effect=self._fake_parse):
+                pipeline.run_pipeline(
+                    "Δήμος Δράμας", _date(2021, 1, 1), _date(2021, 12, 31),
+                    Path(tmp) / "run", cache_dir=cache_dir, log=lambda m: None,
+                    pdf_callback=lambda dest, rel: None, free_cache=True)
+            # το PDF σβήστηκε από την cache, αλλά υπάρχει στο run_dir (staging)
+            self.assertFalse((cache_dir / "pdf" / "ΑΔΑ0.pdf").exists())
+            self.assertTrue((Path(tmp) / "run" / "pdf" / "Δήμος Δράμας" /
+                             "2021" / "ΑΔΑ0.pdf").exists())
+
+    def test_default_keeps_cache_copy(self):
+        # default (τοπικό): η cache διατηρείται για ταχύτερα re-runs
+        from unittest import mock
+        from demolitions import pipeline
+        from datetime import date as _date
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp) / "cache"
+            (cache_dir / "pdf").mkdir(parents=True)
+            (cache_dir / "pdf" / "ΑΔΑ0.pdf").write_bytes(b"%PDF-1.4 x")
+            with mock.patch.object(pipeline, "search_permits",
+                                   return_value=[self._decision(0)]), \
+                 mock.patch.object(pipeline, "parse_decision",
+                                   side_effect=self._fake_parse):
+                pipeline.run_pipeline(
+                    "Δήμος Δράμας", _date(2021, 1, 1), _date(2021, 12, 31),
+                    Path(tmp) / "run", cache_dir=cache_dir, log=lambda m: None)
+            self.assertTrue((cache_dir / "pdf" / "ΑΔΑ0.pdf").exists())
+
     def test_size_estimate_logged(self):
         with tempfile.TemporaryDirectory() as tmp:
             logs = []
@@ -885,6 +926,36 @@ class TestWebUI(unittest.TestCase):
         self.assertFalse(m["has_pdfs"])           # PDF καθαρίστηκαν
         self.assertEqual(m["pdf_bytes"], 0)
         self.assertTrue(self.webui.store.exists(self.RID))   # το run μένει
+
+    def test_keepalive_noop_without_url(self):
+        # τοπικά (χωρίς RENDER_EXTERNAL_URL) το keep-alive δεν κάνει αίτημα
+        from unittest import mock
+        w = self.webui
+        with mock.patch.object(w, "KEEPALIVE_URL", None), \
+             mock.patch.object(w.urllib.request, "urlopen") as urlopen:
+            j = w.Job()
+            j.state = "running"
+            w._keepalive_loop(j)        # επιστρέφει αμέσως
+            urlopen.assert_not_called()
+
+    def test_keepalive_pings_then_stops_when_job_done(self):
+        from unittest import mock
+        w = self.webui
+        j = w.Job()
+        j.state = "running"
+
+        # στο πρώτο ping το job «τελειώνει» -> ο βρόχος σταματά αμέσως μετά
+        def stop(*a, **k):
+            j.state = "done"
+            return mock.MagicMock()
+
+        with mock.patch.object(w, "KEEPALIVE_URL", "https://x.onrender.com"), \
+             mock.patch.object(w.urllib.request, "urlopen",
+                               side_effect=stop) as urlopen, \
+             mock.patch.object(w.time, "sleep"):
+            w._keepalive_loop(j)
+        urlopen.assert_called_once()
+        self.assertIn("/healthz", urlopen.call_args[0][0])
 
     def test_rate_limit_blocks_after_max(self):
         w = self.webui
