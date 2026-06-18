@@ -706,6 +706,33 @@ class TestR2Storage(unittest.TestCase):
             # cleanup αφαιρεί partial R2 uploads όταν run.json λείπει
             self.assertEqual(len(list(store.iter_pdfs("r1"))), 0)
 
+    def test_delete_orphans_sweeps_uploads_without_manifest(self):
+        from moto import mock_aws
+        with mock_aws():
+            import boto3
+            boto3.client("s3", region_name="us-east-1").create_bucket(Bucket="demo-test-bucket")
+            from demolitions.storage import R2Storage
+            store = R2Storage("demo-test-bucket", "acc", "k", "s",
+                              endpoint_url="https://s3.amazonaws.com")
+            # ολοκληρωμένο run (έχει run.json) — μένει
+            self._make_staging(store, "done1", 2,
+                               created_at="2024-01-01T10:00:00+00:00")
+            store.save_run("done1")
+            # orphan: PDF χωρίς run.json (run που σκοτώθηκε πριν το save_run)
+            store.s3.put_object(Bucket="demo-test-bucket",
+                                Key="runs/killed/pdf/a.pdf", Body=b"%PDF x")
+            store.s3.put_object(Bucket="demo-test-bucket",
+                                Key="runs/killed/pdf/b.pdf", Body=b"%PDF y")
+            # active: ανεβαίνει ακόμη (χωρίς run.json) — προστατεύεται
+            store.s3.put_object(Bucket="demo-test-bucket",
+                                Key="runs/active/pdf/c.pdf", Body=b"%PDF z")
+
+            freed = store.delete_orphans(keep_ids=("active",))
+            self.assertEqual(freed, 1)
+            self.assertTrue(store.exists("done1"))                  # έμεινε
+            self.assertEqual(len(list(store.iter_pdfs("killed"))), 0)  # σβήστηκε
+            self.assertEqual(len(list(store.iter_pdfs("active"))), 1)  # προστατεύθηκε
+
     def test_resilient_body_resumes_after_dropped_read(self):
         """Αν κοπεί η σύνδεση R2 στη μέση, το _resilient_body ξανανοίγει με
         Range και ολοκληρώνει — δεν κόβει το zip (αιτία του 2.3 αντί 3.24 GB)."""
@@ -794,6 +821,26 @@ class TestLocalStorage(unittest.TestCase):
             self.assertTrue(st.exists("r1"))                       # μεταδεδομένα μένουν
             st.delete_run("r1")
             self.assertFalse(st.exists("r1"))
+
+    def test_delete_orphans(self):
+        from demolitions.storage import LocalStorage
+        with tempfile.TemporaryDirectory() as tmp:
+            st = LocalStorage(tmp)
+            good = st.staging_dir("good")             # έχει run.json -> μένει
+            good.mkdir(parents=True, exist_ok=True)
+            (good / "run.json").write_text("{}", "utf-8")
+            bad = st.staging_dir("bad")               # χωρίς run.json -> orphan
+            (bad / "pdf").mkdir(parents=True)
+            (bad / "pdf" / "x.pdf").write_bytes(b"x")
+            act = st.staging_dir("active")            # ανεβαίνει ακόμη -> keep
+            (act / "pdf").mkdir(parents=True)
+            (act / "pdf" / "y.pdf").write_bytes(b"y")
+
+            freed = st.delete_orphans(keep_ids=("active",))
+            self.assertEqual(freed, 1)
+            self.assertTrue((Path(tmp) / "good").exists())
+            self.assertFalse((Path(tmp) / "bad").exists())
+            self.assertTrue((Path(tmp) / "active").exists())
 
 
 class TestWebUI(unittest.TestCase):
@@ -1018,6 +1065,18 @@ class TestWebUI(unittest.TestCase):
             w._keepalive_loop(j)
         urlopen.assert_called_once()
         self.assertIn("/healthz", urlopen.call_args[0][0])
+
+    def test_delete_all_pdfs_sweeps_orphans(self):
+        # φάκελος run χωρίς run.json (ημιτελές) -> τον καθαρίζει το /api/pdfs
+        orphan = self.webui.store.staging_dir("orphan-run")
+        (orphan / "pdf").mkdir(parents=True, exist_ok=True)
+        (orphan / "pdf" / "z.pdf").write_bytes(b"%PDF x")
+        self.assertTrue(orphan.exists())
+        r = self.client.delete("/api/pdfs")
+        self.assertEqual(r.status_code, 200)
+        self.assertGreaterEqual(r.get_json().get("orphans", 0), 1)
+        self.assertFalse(orphan.exists())
+        self.assertTrue(self.webui.store.exists(self.RID))   # ολοκληρωμένο μένει
 
     def test_rate_limit_blocks_after_max(self):
         w = self.webui

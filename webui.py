@@ -211,6 +211,9 @@ def _geocode_worker(j, run_id, staging=None):
                        step=j.step, cancel=j.cancel_event.is_set)
         store.save_meta(run_id)   # μόνο json/xlsx — τα PDF ανέβηκαν ήδη
         store.enforce_pdf_cap(log=j.append)
+        # καθάρισε ημιτελή ανεβάσματα παλιότερων run που σκοτώθηκαν (το τωρινό
+        # run έχει ήδη run.json, άρα δεν θεωρείται orphan — κρατιέται έτσι κι αλλιώς)
+        store.delete_orphans(keep_ids=(run_id,), log=j.append)
         j.result = _result_payload(run_id)
         j.state = "done"
     except CancelledRun:
@@ -393,7 +396,9 @@ def api_delete_all_pdfs():
         m["has_pdfs"] = False
         store.write_manifest(m["run_id"], m)
         cleared += 1
-    return jsonify({"ok": True, "cleared": cleared})
+    # ελευθέρωσε και τα ημιτελή ανεβάσματα (orphan) που δεν φαίνονται στο ιστορικό
+    orphans = store.delete_orphans(keep_ids=(active,) if active else ())
+    return jsonify({"ok": True, "cleared": cleared, "orphans": orphans})
 
 
 @app.delete("/api/runs/<run_id>")

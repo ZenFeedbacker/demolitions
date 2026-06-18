@@ -303,7 +303,11 @@ $("clearallpdfs").addEventListener("click", async () => {
                "Τα αποτελέσματα και τα Excel μένουν· ελευθερώνεται χώρος και " +
                "τα zip θα ξαναφτιάχνονται κατ' απαίτηση από τη Διαύγεια.")) return;
   try {
-    if (!(await fetch("/api/pdfs", { method: "DELETE" })).ok) throw 0;
+    const r = await fetch("/api/pdfs", { method: "DELETE" });
+    if (!r.ok) throw 0;
+    const d = await r.json();
+    if (d.orphans) alert(`Καθαρίστηκαν και ${d.orphans} ημιτελή ανεβάσματα ` +
+                         `(orphan) που έπιαναν χώρο.`);
   } catch { alert("Σφάλμα"); }
   loadHistory();
 });

@@ -149,6 +149,20 @@ class LocalStorage:
     def delete_run(self, run_id):
         shutil.rmtree(self._dir(run_id), ignore_errors=True)
 
+    def delete_orphans(self, keep_ids=(), log=lambda m: None):
+        """Σβήνει φακέλους run χωρίς run.json (ημιτελή ανεβάσματα από run που
+        σκοτώθηκαν πριν ολοκληρωθούν). `keep_ids`: εξαιρέσεις (π.χ. run που
+        εκτελείται τώρα — το run.json γράφεται τελευταίο)."""
+        keep = set(keep_ids)
+        freed = 0
+        for d in self.runs.iterdir():
+            if (d.is_dir() and d.name not in keep
+                    and not (d / "run.json").exists()):
+                shutil.rmtree(d, ignore_errors=True)
+                freed += 1
+                log(f"Εκκαθάριση ημιτελούς (orphan) run: {d.name}")
+        return freed
+
     def enforce_pdf_cap(self, log=lambda m: None):
         pass  # τοπικά δεν περιορίζουμε (ο δίσκος είναι ο δίσκος του χρήστη)
 
@@ -370,6 +384,29 @@ class R2Storage:
             keys += [o["Key"] for o in page.get("Contents", [])]
         if keys:
             self._delete_keys(keys)
+
+    def delete_orphans(self, keep_ids=(), log=lambda m: None):
+        """Σβήνει prefixes runs/<id>/ με αντικείμενα αλλά ΧΩΡΙΣ run.json —
+        ημιτελή ανεβάσματα από run που σκοτώθηκαν πριν το save_run (το
+        run.json ανεβαίνει τελευταίο). Αόρατα στο ιστορικό, αλλά πιάνουν χώρο.
+        `keep_ids`: run που ανεβαίνουν ακόμη (να μη θεωρηθούν orphan)."""
+        keep = set(keep_ids)
+        all_ids, have_manifest = set(), set()
+        paginator = self.s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.bucket, Prefix="runs/"):
+            for o in page.get("Contents", []):
+                parts = o["Key"].split("/")     # runs / <rid> / …
+                if len(parts) < 3:
+                    continue
+                all_ids.add(parts[1])
+                if len(parts) == 3 and parts[2] == "run.json":
+                    have_manifest.add(parts[1])
+        freed = 0
+        for rid in all_ids - have_manifest - keep:
+            self.delete_run(rid)
+            freed += 1
+            log(f"Εκκαθάριση ημιτελούς (orphan) run: {rid}")
+        return freed
 
     def enforce_pdf_cap(self, log=lambda m: None):
         sizes = self.sizes_by_run()              # ένα πέρασμα για τα μεγέθη
