@@ -706,6 +706,36 @@ class TestR2Storage(unittest.TestCase):
             # cleanup αφαιρεί partial R2 uploads όταν run.json λείπει
             self.assertEqual(len(list(store.iter_pdfs("r1"))), 0)
 
+    def test_resilient_body_resumes_after_dropped_read(self):
+        """Αν κοπεί η σύνδεση R2 στη μέση, το _resilient_body ξανανοίγει με
+        Range και ολοκληρώνει — δεν κόβει το zip (αιτία του 2.3 αντί 3.24 GB)."""
+        from moto import mock_aws
+        with mock_aws():
+            import boto3
+            boto3.client("s3", region_name="us-east-1").create_bucket(Bucket="demo-test-bucket")
+            from demolitions.storage import R2Storage
+            store = R2Storage("demo-test-bucket", "acc", "k", "s",
+                              endpoint_url="https://s3.amazonaws.com")
+            data = b"abcdefgh" * 30000          # 240 KB -> πολλά chunks
+            key = "runs/r1/pdf/a.pdf"
+            store.s3.put_object(Bucket="demo-test-bucket", Key=key, Body=data)
+
+            class FlakyBody:
+                """Σκάει στο 2ο read· μετά συμπεριφέρεται κανονικά."""
+                def __init__(self, real):
+                    self.real, self.reads = real, 0
+                def read(self, n=-1):
+                    self.reads += 1
+                    if self.reads == 2:
+                        raise ConnectionError("dropped")
+                    return self.real.read(n)
+                def close(self):
+                    self.real.close()
+
+            first = store.s3.get_object(Bucket="demo-test-bucket", Key=key)["Body"]
+            out = b"".join(store._resilient_body(key, FlakyBody(first), len(data)))
+            self.assertEqual(out, data)         # πλήρες, παρά την πτώση
+
     def test_eviction_uses_creation_time_not_manifest_mtime(self):
         from moto import mock_aws
         with mock_aws():

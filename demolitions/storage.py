@@ -289,13 +289,44 @@ class R2Storage:
             ContentType=content_type("run.json"))
 
     def open_member(self, run_id, relpath):
+        key = self._key(run_id, relpath)
         try:
-            obj = self.s3.get_object(Bucket=self.bucket,
-                                     Key=self._key(run_id, relpath))
+            obj = self.s3.get_object(Bucket=self.bucket, Key=key)
         except Exception:
             return None
-        body = obj["Body"]
-        return _iter_body(body), obj["ContentLength"]
+        size = obj["ContentLength"]
+        return self._resilient_body(key, obj["Body"], size), size
+
+    def _resilient_body(self, key, body, size, chunk=65536):
+        """Streamάρει ένα αντικείμενο· αν η σύνδεση με το R2 κοπεί στη μέση
+        (συχνό σε πολύλεπτα downloads μεγάλου zip) ξανανοίγει με Range από το
+        σημείο που έμεινε, αντί να κόψει ολόκληρο το zip. Μετά από αρκετές
+        αποτυχίες παρατά αυτό το μέλος (ημιτελές) χωρίς να ρίξει το stream."""
+        pos = 0
+        attempt = 0
+        while True:
+            try:
+                b = body.read(chunk)
+            except Exception:
+                try:
+                    body.close()
+                except Exception:
+                    pass
+                attempt += 1
+                if pos >= size or attempt > 5:
+                    return
+                try:
+                    body = self.s3.get_object(
+                        Bucket=self.bucket, Key=key,
+                        Range=f"bytes={pos}-")["Body"]
+                except Exception:
+                    return
+                continue
+            if not b:
+                body.close()
+                return
+            pos += len(b)
+            yield b
 
     def list_runs(self):
         out = []
@@ -388,14 +419,3 @@ def _file_chunks(path, chunk=65536):
             if not b:
                 break
             yield b
-
-
-def _iter_body(body, chunk=65536):
-    try:
-        while True:
-            b = body.read(chunk)
-            if not b:
-                break
-            yield b
-    finally:
-        body.close()
