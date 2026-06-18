@@ -26,7 +26,7 @@ CONTENT_TYPES = {
     ".pdf": "application/pdf",
     ".zip": "application/zip",
 }
-DEFAULT_PDF_CAP = 1_000_000_000  # 1 GB
+DEFAULT_PDF_CAP = 2_000_000_000  # 2 GB
 
 
 def content_type(name):
@@ -90,6 +90,9 @@ class LocalStorage:
 
     def save_meta(self, run_id):
         pass  # τα json/xlsx είναι ήδη στον δίσκο
+
+    def upload_pdf_immediate(self, run_id, relpath, local_path):
+        pass  # τοπικά τα PDF μένουν στη θέση τους — δεν τα σβήνουμε
 
     def free_local_pdfs(self, run_id):
         pass  # τοπικά τα PDF ΕΙΝΑΙ η αποθήκη — δεν τα σβήνουμε
@@ -238,6 +241,18 @@ class R2Storage:
             if (d / rel).is_file():
                 self._upload(run_id, rel)
 
+    def upload_pdf_immediate(self, run_id, relpath, local_path):
+        """Ανεβάζει ένα PDF αμέσως μετά τη λήψη του και σβήνει το τοπικό
+        αντίγραφο, ώστε να μην συσσωρεύονται GB PDF στον εφήμερο δίσκο κατά
+        τη διάρκεια μεγάλων αναζητήσεων (π.χ. Αττική ~1500 άδειες)."""
+        self.s3.upload_file(
+            str(local_path), self.bucket, self._key(run_id, relpath),
+            ExtraArgs={"ContentType": content_type(relpath)})
+        try:
+            Path(local_path).unlink()
+        except OSError:
+            pass
+
     def free_local_pdfs(self, run_id):
         """Σβήνει τα τοπικά PDF του staging μετά το ανέβασμα (τα PDF είναι
         ασφαλή στο R2)· μειώνει τη χρήση του εφήμερου δίσκου κατά τη
@@ -246,6 +261,13 @@ class R2Storage:
 
     def cleanup(self, run_id):
         shutil.rmtree(self._staging / run_id, ignore_errors=True)
+        # αν το run απέτυχε πριν το save_run, καθαρίζει partial uploads στο R2
+        # (προστασία από orphaned PDF objects όταν διακόπτεται η αναζήτηση)
+        try:
+            if not self.exists(run_id):
+                self.delete_run(run_id)
+        except Exception:
+            pass
 
     def exists(self, run_id):
         try:

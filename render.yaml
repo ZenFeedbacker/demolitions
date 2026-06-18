@@ -10,7 +10,7 @@ services:
       - key: DEMOLITIONS_STORAGE
         value: r2
       - key: DEMOLITIONS_PDF_CACHE_LIMIT
-        value: "1000000000"      # 1 GB cache PDF· τα παλιότερα run χάνουν PDF
+        value: "2000000000"      # 2 GB cache PDF· τα παλιότερα run χάνουν PDF
       - key: DEMOLITIONS_RATE_LIMIT_WINDOW_SECONDS
         value: "60"
       - key: DEMOLITIONS_RATE_LIMIT_MAX_REQUESTS

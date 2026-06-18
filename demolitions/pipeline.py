@@ -55,7 +55,7 @@ def _write_run_files(run_dir, rows, manifest):
 
 
 def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
-                 log=print, step=None, cancel=None):
+                 log=print, step=None, cancel=None, pdf_callback=None):
     """Αναζήτηση + PDF + xlsx (χωρίς συντεταγμένες). Επιστρέφει RunResult."""
     if from_date < E_ADEIES_START:
         log(f"Προσοχή: το e-Άδειες ξεκίνησε τον 10/2018· πριν από "
@@ -78,6 +78,9 @@ def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
     decisions = search_permits(from_date, to_date, munis, cache_dir,
                                progress=search_progress)
     log(f"Σύνολο: {len(decisions)} άδειες κατεδάφισης")
+    if decisions:
+        est_mb = max(1, round(len(decisions) * 300 / 1024))
+        log(f"Εκτιμώμενο μέγεθος PDF: ~{est_mb} MB")
     if not decisions:
         raise NoPermitsFound("Καμία άδεια στο διάστημα/περιοχή.")
 
@@ -135,6 +138,8 @@ def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
         if not dest.exists():
             shutil.copy2(src, dest)
             copied += 1
+            if pdf_callback:
+                pdf_callback(dest, str(dest.relative_to(run_dir)))
         row["pdf_path"] = str(dest.relative_to(run_dir))
     log(f"PDF: {pdf_root}/ (αντιγράφηκαν {copied})")
 

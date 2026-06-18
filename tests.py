@@ -501,6 +501,48 @@ class TestR2Storage(unittest.TestCase):
             store.delete_run("new")
             self.assertFalse(store.exists("new"))
 
+    def test_upload_pdf_immediate_uploads_and_deletes_local(self):
+        from moto import mock_aws
+        with mock_aws():
+            import boto3
+            boto3.client("s3", region_name="us-east-1").create_bucket(Bucket="demo-test-bucket")
+            from demolitions.storage import R2Storage
+            store = R2Storage("demo-test-bucket", "acc", "k", "s",
+                              endpoint_url="https://s3.amazonaws.com")
+            d = store.staging_dir("r1")
+            p = d / "pdf" / "Δήμος Χ" / "2021" / "ΑΔΑ1.pdf"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(b"%PDF-1.4 test")
+            relpath = str(p.relative_to(d))
+
+            store.upload_pdf_immediate("r1", relpath, p)
+
+            self.assertFalse(p.exists())                        # τοπικό αντίγραφο σβήστηκε
+            self.assertEqual(len(list(store.iter_pdfs("r1"))), 1)  # αρχείο στο R2
+
+    def test_cleanup_removes_partial_r2_uploads(self):
+        from moto import mock_aws
+        with mock_aws():
+            import boto3
+            boto3.client("s3", region_name="us-east-1").create_bucket(Bucket="demo-test-bucket")
+            from demolitions.storage import R2Storage
+            store = R2Storage("demo-test-bucket", "acc", "k", "s",
+                              endpoint_url="https://s3.amazonaws.com")
+            d = store.staging_dir("r1")
+            p = d / "pdf" / "Δήμος Χ" / "2021" / "ΑΔΑ1.pdf"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(b"%PDF-1.4 test")
+            relpath = str(p.relative_to(d))
+
+            store.upload_pdf_immediate("r1", relpath, p)
+            self.assertEqual(len(list(store.iter_pdfs("r1"))), 1)
+            self.assertFalse(store.exists("r1"))   # run.json δεν έχει ανέβει ακόμα
+
+            store.cleanup("r1")
+
+            # cleanup αφαιρεί partial R2 uploads όταν run.json λείπει
+            self.assertEqual(len(list(store.iter_pdfs("r1"))), 0)
+
     def test_eviction_uses_creation_time_not_manifest_mtime(self):
         from moto import mock_aws
         with mock_aws():

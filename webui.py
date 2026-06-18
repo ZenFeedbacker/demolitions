@@ -138,8 +138,13 @@ def limit_expensive_routes():
 def _run_worker(j, area, from_date, to_date, run_id):
     try:
         staging = store.staging_dir(run_id)
+
+        def on_pdf(local_path, relpath):
+            store.upload_pdf_immediate(run_id, relpath, local_path)
+
         run_pipeline(area, from_date, to_date, staging, cache_dir=CACHE_DIR,
-                     log=j.append, step=j.step, cancel=j.cancel_event.is_set)
+                     log=j.append, step=j.step, cancel=j.cancel_event.is_set,
+                     pdf_callback=on_pdf)
         j.append("Αποθήκευση αρχείων…")
         store.save_run(run_id, progress=lambda i, n: j.step("upload", i, n))
         store.free_local_pdfs(run_id)
