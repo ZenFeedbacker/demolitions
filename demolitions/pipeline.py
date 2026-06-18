@@ -209,7 +209,12 @@ def enrich_geocode(run_dir, *, cache_dir, log=print, step=None, cancel=None):
                     "κτίσμα (PDF)", "οδός+αριθμός", "οδός", "οικισμός"):
                 dist = geocoder.dimos_distance_km(row, row["dimos"])
                 if dist and dist > 60:
-                    flag = f"~{dist:.0f}km από τον δήμο"
+                    # «(» στο display = ομώνυμος δήμος (π.χ. «Ηρακλείου
+                    # (Αττικής)») — η απόσταση δείχνει μάλλον λάθος επιλογή
+                    # δήμου στο e-Άδειες (ο submitter διάλεξε τον ομώνυμο)
+                    flag = (f"~{dist:.0f}km από τον δήμο — πιθανώς ομώνυμος δήμος"
+                            if "(" in row["dimos"]
+                            else f"~{dist:.0f}km από τον δήμο")
                     if flag not in row["flags"]:
                         row["flags"] = (row["flags"] + "; " if row["flags"]
                                         else "") + flag

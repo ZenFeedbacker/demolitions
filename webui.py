@@ -462,14 +462,20 @@ def _diavgeia_pdf(ada):
         return
 
 
-def _zip_member(run_id, arc):
+def _zip_member(run_id, arc, ada=None):
     """Lazy: ανοίγει το αρχείο (στο R2: get_object) μόνο όταν φτάσει η σειρά
     του στο stream. Αλλιώς θα ανοίγαμε δεκάδες συνδέσεις/round-trips ΠΡΙΝ
     σταλεί το πρώτο byte — ο proxy κάνει timeout (502) και κρατάμε πολλές
-    ανοιχτές συνδέσεις ταυτόχρονα."""
+    ανοιχτές συνδέσεις ταυτόχρονα.
+
+    Αν το cached αντικείμενο λείπει στο R2 (μερικό ανέβασμα/εκκαθάριση/race)
+    και ξέρουμε το ΑΔΑ, πέφτει πίσω σε λήψη από τη Διαύγεια — ώστε το zip να
+    μη βγάζει 0-byte εγγραφή και να είναι μικρότερο από το αναμενόμενο."""
     m = store.open_member(run_id, arc)
     if m:
         yield from m[0]
+    elif ada:
+        yield from _diavgeia_pdf(ada)
 
 
 @app.get("/zip/<run_id>.zip")
@@ -488,8 +494,9 @@ def serve_zip(run_id):
         arc = r.get("pdf_path")
         if not arc:
             continue
-        if cached:                                  # από την αποθήκη (lazy)
-            zs.add(data=_zip_member(run_id, arc), arcname=arc)
+        if cached:                                  # από την αποθήκη (lazy)·
+            # με fallback σε Διαύγεια αν λείπει το αντικείμενο
+            zs.add(data=_zip_member(run_id, arc, r.get("ada")), arcname=arc)
         elif r.get("ada"):                           # κατ' απαίτηση από Διαύγεια
             zs.add(data=_diavgeia_pdf(r["ada"]), arcname=arc)
     return Response(zs, mimetype="application/zip",

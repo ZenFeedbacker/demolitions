@@ -875,6 +875,29 @@ class TestWebUI(unittest.TestCase):
         finally:
             w.store.open_member = orig
 
+    def test_zip_falls_back_to_diavgeia_when_cached_pdf_missing(self):
+        """has_pdfs=True αλλά λείπει αντικείμενο στο R2 -> το zip το παίρνει
+        από τη Διαύγεια αντί για 0-byte εγγραφή (μικρότερο zip)."""
+        from unittest import mock
+        w = self.webui
+        orig = w.store.open_member
+
+        def fake_open(rid, rel):
+            if rel.endswith(".pdf"):
+                return None                  # cached PDF λείπει
+            return orig(rid, rel)
+
+        with mock.patch.object(w.store, "open_member", side_effect=fake_open), \
+             mock.patch.object(w, "_diavgeia_pdf",
+                               side_effect=lambda ada: iter([b"%PDF-FALLBACK"])):
+            with w.app.test_request_context():
+                resp = w.serve_zip(self.RID)
+                body = b"".join(resp.response)
+        zf = zipfile.ZipFile(io.BytesIO(body))
+        pdfs = [n for n in zf.namelist() if n.endswith(".pdf")]
+        self.assertTrue(pdfs)
+        self.assertEqual(zf.read(pdfs[0]), b"%PDF-FALLBACK")   # όχι 0 bytes
+
     def test_zip_rate_limit(self):
         self.webui.RATE_LIMIT_WINDOW_SECONDS = 3600
         self.webui.RATE_LIMIT_MAX_REQUESTS = 1

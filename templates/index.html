@@ -559,6 +559,8 @@ function buildTable(rows, runId) {
       <select class="forofoi"><option value="">Όλοι οι όροφοι</option></select>
       <select class="fdup"><option value="">Όλες οι εγγραφές</option>
         <option value="clean">Χωρίς πιθανά διπλά</option></select>
+      <select class="floc"><option value="">Όλες οι θέσεις</option>
+        <option value="near">Χωρίς ύποπτη θέση (π.χ. ομώνυμος δήμος)</option></select>
     </div>
     <div class="tablewrap"><table><thead><tr></tr></thead><tbody></tbody></table></div>
     <div class="note tnote"></div>`;
@@ -570,11 +572,15 @@ function buildTable(rows, runId) {
   for (const o of orofoi) fo.add(new Option(o, o));
   const fx = box.querySelector(".fektasi");
   const fk = box.querySelector(".fktisma");
+  const fl = box.querySelector(".floc");
   if (dimoi.length < 2) fd.classList.add("hidden");
   if (eidi.length < 2) fe.classList.add("hidden");
   if (new Set(rows.map(r => r.ektasi || "ολική")).size < 2)
     fx.classList.add("hidden");
   if (!rows.some(r => r.nonbuilding)) fk.classList.add("hidden");
+  // φίλτρο ύποπτης θέσης μόνο αν υπάρχουν σημειωμένες εγγραφές «μακριά από δήμο»
+  if (!rows.some(r => (r.flags || "").includes("από τον δήμο")))
+    fl.classList.add("hidden");
 
   const tr = box.querySelector("thead tr");
   let sortKey = 0, sortDir = 1;
@@ -588,7 +594,7 @@ function buildTable(rows, runId) {
   function redraw() {
     const q = norm(box.querySelector(".ftext").value);
     const dim = fd.value, oro = fo.value, dup = box.querySelector(".fdup").value;
-    const eid = fe.value, ekt = fx.value, ktisma = fk.value;
+    const eid = fe.value, ekt = fx.value, ktisma = fk.value, loc = fl.value;
     let view = rows.filter(r =>
       (!dim || r.dimos === dim) &&
       (!eid || (r.eidos || "κατεδάφιση") === eid) &&
@@ -596,6 +602,7 @@ function buildTable(rows, runId) {
       (!ktisma || (ktisma === "build" ? !r.nonbuilding : !!r.nonbuilding)) &&
       (!oro || String(r.orofoi) === oro) &&
       (!dup || !(r.flags || "").includes("πιθανό διπλό")) &&
+      (!loc || !(r.flags || "").includes("από τον δήμο")) &&
       (!q || norm([r.odos, r.poli, r.perigrafi, r.dim_enotita, r.ada].join(" ")).includes(q)));
     const get = COLS[sortKey][4] || COLS[sortKey][1];
     view.sort((a, b) => {
