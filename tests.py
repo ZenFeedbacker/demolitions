@@ -429,6 +429,96 @@ class TestRunsConsistency(unittest.TestCase):
                                     f"{run_dir.name}: λείπει {r['pdf_path']}")
 
 
+class TestRunPipelinePdfCallback(unittest.TestCase):
+    """Ο pdf_callback ανεβάζει/σβήνει κάθε PDF αμέσως — έτσι ο εφήμερος
+    δίσκος δεν γεμίζει σε μεγάλες αναζητήσεις (το bug της Αττικής 2025)."""
+
+    def _decision(self, i):
+        ts = int(datetime(2021, 1, 15, 12, tzinfo=timezone.utc).timestamp() * 1000)
+        return {"ada": f"ΑΔΑ{i}", "issueDate": ts,
+                "subject": "Άδεια Κατεδάφισης (ν.4759/2020): ΚΑΤΕΔΑΦΙΣΗ ΚΑΤΟΙΚΙΑΣ",
+                "extraFieldValues": {"municipality": "0201"}}  # Δήμος Δράμας
+
+    def _fake_parse(self, decision, cache_dir):
+        return {"ada": decision["ada"],
+                "url": f"https://diavgeia.gov.gr/decision/view/{decision['ada']}",
+                "perigrafi": "ΚΑΤΕΔΑΦΙΣΗ ΚΑΤΟΙΚΙΑΣ", "parse_ok": True,
+                "odos": "Οδός", "ar_apo": str(decision["ada"][-1]), "ar_eos": "",
+                "poli": "Δράμα", "dim_enotita": "", "ot": "", "kaek": "",
+                "orofoi": 1, "ektasi": "ολική", "nonbuilding": False}
+
+    def _run(self, tmp, n_decisions, n_cached, calls, **kwargs):
+        from unittest import mock
+        from demolitions import pipeline
+        cache_dir = Path(tmp) / "cache"
+        (cache_dir / "pdf").mkdir(parents=True)
+        decisions = [self._decision(i) for i in range(n_decisions)]
+        for i in range(n_cached):     # μόνο τα πρώτα n_cached έχουν cached PDF
+            (cache_dir / "pdf" / f"ΑΔΑ{i}.pdf").write_bytes(b"%PDF-1.4 x" * 50)
+        from datetime import date as _date
+        with mock.patch.object(pipeline, "search_permits", return_value=decisions), \
+             mock.patch.object(pipeline, "parse_decision", side_effect=self._fake_parse):
+            return pipeline.run_pipeline(
+                "Δήμος Δράμας", _date(2021, 1, 1), _date(2021, 12, 31),
+                Path(tmp) / "run", cache_dir=cache_dir,
+                log=lambda m: None,
+                pdf_callback=lambda dest, rel: calls.append((dest, rel)),
+                **kwargs)
+
+    def test_callback_fires_once_per_cached_pdf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            calls = []
+            result = self._run(tmp, n_decisions=3, n_cached=2, calls=calls)
+            # 3 άδειες, 2 με cached PDF -> 2 κλήσεις
+            self.assertEqual(len(calls), 2)
+            for dest, rel in calls:
+                self.assertTrue(rel.startswith("pdf/"))
+                # το PDF υπάρχει στον δίσκο τη στιγμή του callback (το upload
+                # το διαβάζει· ο R2 backend το σβήνει αμέσως μετά)
+                self.assertTrue(Path(dest).is_file())
+                self.assertEqual(str(Path(dest).relative_to(result.run_dir)), rel)
+            # η άδεια χωρίς cached PDF έχει κενό pdf_path, χωρίς callback
+            blank = [r for r in result.rows if not r["pdf_path"]]
+            self.assertEqual(len(blank), 1)
+            self.assertEqual(blank[0]["ada"], "ΑΔΑ2")
+
+    def test_no_callback_when_not_provided(self):
+        # χωρίς pdf_callback (CLI / τοπικό) το pipeline τρέχει κανονικά
+        with tempfile.TemporaryDirectory() as tmp:
+            from unittest import mock
+            from demolitions import pipeline
+            from datetime import date as _date
+            cache_dir = Path(tmp) / "cache"
+            (cache_dir / "pdf").mkdir(parents=True)
+            (cache_dir / "pdf" / "ΑΔΑ0.pdf").write_bytes(b"%PDF-1.4 x")
+            with mock.patch.object(pipeline, "search_permits",
+                                   return_value=[self._decision(0)]), \
+                 mock.patch.object(pipeline, "parse_decision",
+                                   side_effect=self._fake_parse):
+                result = pipeline.run_pipeline(
+                    "Δήμος Δράμας", _date(2021, 1, 1), _date(2021, 12, 31),
+                    Path(tmp) / "run", cache_dir=cache_dir, log=lambda m: None)
+            self.assertEqual(result.rows[0]["pdf_path"],
+                             "pdf/Δήμος Δράμας/2021/ΑΔΑ0.pdf")
+
+    def test_size_estimate_logged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            logs = []
+            from unittest import mock
+            from demolitions import pipeline
+            from datetime import date as _date
+            cache_dir = Path(tmp) / "cache"
+            (cache_dir / "pdf").mkdir(parents=True)
+            with mock.patch.object(pipeline, "search_permits",
+                                   return_value=[self._decision(i) for i in range(2)]), \
+                 mock.patch.object(pipeline, "parse_decision",
+                                   side_effect=self._fake_parse):
+                pipeline.run_pipeline(
+                    "Δήμος Δράμας", _date(2021, 1, 1), _date(2021, 12, 31),
+                    Path(tmp) / "run", cache_dir=cache_dir, log=logs.append)
+            self.assertTrue(any("Εκτιμώμενο μέγεθος PDF" in m for m in logs))
+
+
 class TestR2Storage(unittest.TestCase):
     """Έλεγχος του R2 backend με εικονικό S3 (moto), αν είναι διαθέσιμο."""
 
