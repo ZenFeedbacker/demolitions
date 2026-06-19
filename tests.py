@@ -651,9 +651,9 @@ class TestAreaBboxFlag(unittest.TestCase):
         self.assertIsNone(rows_centroid_bbox(rows))
 
     def test_enrich_geocode_flags_out_of_area(self):
-        """enrich_geocode σημαίνει εγγραφές εκτός γεωγραφικών ορίων."""
-        from unittest import mock
-        from demolitions import geocode, pipeline
+        """enrich_geocode σημαίνει εγγραφές εκτός γεωγραφικών ορίων — χωρίς
+        καμία κλήση Nominatim (όλες οι εγγραφές έχουν ήδη συντεταγμένες PDF)."""
+        from demolitions import pipeline
         base = {
             "url": "https://diavgeia.gov.gr/decision/view/X",
             "dimos": "Δήμος Αθηναίων", "dimos_query": "Δήμος Αθηναίων",
@@ -678,9 +678,7 @@ class TestAreaBboxFlag(unittest.TestCase):
                 json.dumps(rows, ensure_ascii=False), "utf-8")
             (run_dir / "run.json").write_text(
                 json.dumps(manifest, ensure_ascii=False), "utf-8")
-            with mock.patch.object(geocode.Geocoder, "dimos_distance_km",
-                                   return_value=None):
-                pipeline.enrich_geocode(run_dir, cache_dir=tmp, log=lambda m: None)
+            pipeline.enrich_geocode(run_dir, cache_dir=tmp, log=lambda m: None)
             result_rows = json.loads((run_dir / "rows.json").read_text("utf-8"))
         crete = next(r for r in result_rows if r["ada"] == "ΚΡΗΤΗ")
         self.assertIn("εκτός περιοχής αναζήτησης", crete["flags"])

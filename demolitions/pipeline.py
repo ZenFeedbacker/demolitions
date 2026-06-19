@@ -204,21 +204,9 @@ def enrich_geocode(run_dir, *, cache_dir, log=print, step=None, cancel=None):
             if row.get("lat") is None:
                 row["lat"], row["lon"], row["precision"] = \
                     geocoder.geocode_row(row, row["dimos"])
-            # σημείο μακριά από τον δήμο των μεταδεδομένων = ύποπτο
-            # (λάθος δήλωση δήμου στο e-Άδειες) — και για συντεταγμένες PDF
-            if row.get("lat") is not None and row["precision"] in (
-                    "κτίσμα (PDF)", "οδός+αριθμός", "οδός", "οικισμός"):
-                dist = geocoder.dimos_distance_km(row, row["dimos"])
-                if dist and dist > 60:
-                    # «(» στο display = ομώνυμος δήμος (π.χ. «Ηρακλείου
-                    # (Αττικής)») — η απόσταση δείχνει μάλλον λάθος επιλογή
-                    # δήμου στο e-Άδειες (ο submitter διάλεξε τον ομώνυμο)
-                    flag = (f"~{dist:.0f}km από τον δήμο — πιθανώς ομώνυμος δήμος"
-                            if "(" in row["dimos"]
-                            else f"~{dist:.0f}km από τον δήμο")
-                    if flag not in row["flags"]:
-                        row["flags"] = (row["flags"] + "; " if row["flags"]
-                                        else "") + flag
+            # ο έλεγχος «εκτός περιοχής» (ομώνυμοι δήμοι κ.λπ.) γίνεται μετά
+            # τον βρόχο με το bbox των ίδιων των σημείων — χωρίς κλήσεις
+            # Nominatim ανά δήμο (που καθυστερούσαν δραματικά τη φάση αυτή)
             if i % 25 == 0 or i == len(rows):
                 hit = sum(1 for r in rows[:i] if r.get("lat"))
                 log(f"  {i}/{len(rows)} (με συντεταγμένες: {hit})")
