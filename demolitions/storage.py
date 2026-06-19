@@ -448,6 +448,16 @@ class R2Storage:
                 continue
             run_id = m["run_id"]
             size = sizes.get(run_id, {}).get("pdf_bytes", 0)
+            # has_pdfs=True αλλά μηδέν bytes στο R2 (σβήστηκαν out-of-band ή
+            # crash μεταξύ delete_pdfs και rewrite) -> μόνιμη ασυνέπεια: το run
+            # «χωρά» πάντα και κρατά την μπαγιάτικη σημαία για πάντα. Διόρθωση:
+            # γράφε has_pdfs=False και μην το μετράς ούτε προσπαθήσεις delete.
+            if size == 0:
+                m.pop("_mtime", None)
+                m["has_pdfs"] = False
+                self.write_manifest(run_id, m)
+                log(f"Διόρθωση μπαγιάτικου has_pdfs (χωρίς PDF στο R2): {run_id}")
+                continue
             # το πιο πρόσφατο run κρατά πάντα τα PDF του (ο χρήστης μόλις
             # το έτρεξε)· τα υπόλοιπα μέχρι να γεμίσει το όριο
             if not kept_newest or total + size <= self.pdf_cap:

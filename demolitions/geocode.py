@@ -27,6 +27,29 @@ session.headers["User-Agent"] = USER_AGENT
 # ακρίβεια geocoding αρκετή για γεωγραφικό έλεγχο θέσης
 _HIGH_PREC = frozenset(("κτίσμα (PDF)", "οδός+αριθμός", "οδός", "οικισμός"))
 
+# Όριο απόστασης (km) σημείου από το κέντρο της δηλωμένης Περιφερειακής
+# Ενότητας πάνω από το οποίο η εγγραφή θεωρείται «εκτός περιοχής». Επιλέχθηκε
+# με βάση μετρήσεις στα πιο απομακρυσμένα ΝΟΜΙΜΑ σημεία της δικής τους ΠΕ:
+# Αντικύθηρα -> ΠΕ Νήσων Αττικής ~191 km, Ορμένιο -> ΠΕ Έβρου ~173 km, Στρογγύλη
+# -> ΠΕ Ρόδου ~161 km. Μια λάθος χρέωση σε άλλη περιφέρεια απέχει πολύ
+# περισσότερο (Ηράκλειο Κρήτης χρεωμένο στον ομώνυμο δήμο Αττικής ~323 km). Τα
+# 250 km αφήνουν άνετο περιθώριο και από τις δύο πλευρές (~59 km πάνω από το
+# χειρότερο νόμιμο, ~73 km κάτω από το παράδειγμα λάθους).
+PE_DISTANCE_KM = 250.0
+
+
+def load_pe_centroids():
+    """Κέντρα (lat, lon) ανά 2ψήφιο πρόθεμα κωδικού Καλλικράτη (Περιφερειακή
+    Ενότητα). Πακεταρισμένο dataset — κανένα δίκτυο, ντετερμινιστικό για CI.
+    Βλ. demolitions/data/pe_centroids.json."""
+    path = Path(__file__).parent / "data" / "pe_centroids.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return {k: tuple(v) for k, v in data["pe"].items()}
+
+
+# φορτώνεται μία φορά στο import — μικρό λεξικό 75 εγγραφών
+PE_CENTROIDS = load_pe_centroids()
+
 
 def _haversine(la1, lo1, la2, lo2):
     la1, lo1, la2, lo2 = map(math.radians, (la1, lo1, la2, lo2))
@@ -168,70 +191,31 @@ class Geocoder:
                 return hit[0], hit[1], precision
         return None, None, ""
 
-    def dimos_distance_km(self, row, dimos_label):
-        """Απόσταση σημείου από το κέντρο του δήμου των μεταδεδομένων.
-
-        Πιάνει λάθος χρεώσεις δήμου στο e-Άδειες (π.χ. άδειες του Ηρακλείου
-        Κρήτης δηλωμένες στον ομώνυμο δήμο της Αττικής).
-        """
-        if not row.get("lat"):
-            return None
-        query = row.get("dimos_query") or f"Δήμος {_strip_dimos(dimos_label)}"
-        hit = self._query(f"{query}, Ελλάδα")
-        if not hit:
-            return None
-        return _haversine(row["lat"], row["lon"], hit[0], hit[1])
-
     def close(self):
         if self._dirty:
             self._save()
 
 
-def rows_centroid_bbox(rows, margin=0.5):
-    """Ευρωστο bbox (lat_min, lat_max, lon_min, lon_max) από γεωκωδικοποιημένες
-    εγγραφές. Αποκλείει outliers με τον κανόνα 1.5×IQR Tukey: αν π.χ. υπάρχουν
-    μερικές άδειες Κρήτης μέσα σε αναζήτηση Αττικής, η IQR τις αποκλείει και
-    το bbox παραμένει αττικοκεντρικό. Απαιτεί ≥5 σημεία υψηλής ακρίβειας.
+def row_out_of_region(row, *, distance_km=PE_DISTANCE_KM):
+    """Flag «εκτός περιοχής αναζήτησης» με βάση τον ΚΩΔΙΚΟ της εγγραφής.
 
-    Το αποτέλεσμα χρησιμοποιείται σε δεύτερο πέρασμα του enrich_geocode για να
-    εντοπιστούν εγγραφές γεωγραφικά εκτός της ζητούμενης περιοχής — χωρίς
-    επιπλέον κλήσεις Nominatim και ανεξάρτητα από ομωνυμίες δήμων."""
-    pts = [(r["lat"], r["lon"]) for r in rows
-           if r.get("lat") and r.get("precision") in _HIGH_PREC]
-    if len(pts) < 5:
-        return None
-    lats = sorted(p[0] for p in pts)
-    lons = sorted(p[1] for p in pts)
-    n = len(lats)
-    lat_q1, lat_q3 = lats[n // 4], lats[3 * n // 4]
-    lon_q1, lon_q3 = lons[n // 4], lons[3 * n // 4]
-    lat_iqr = max(lat_q3 - lat_q1, 0.01)
-    lon_iqr = max(lon_q3 - lon_q1, 0.01)
-    core = [(la, lo) for la, lo in pts
-            if (lat_q1 - 1.5 * lat_iqr <= la <= lat_q3 + 1.5 * lat_iqr
-                and lon_q1 - 1.5 * lon_iqr <= lo <= lon_q3 + 1.5 * lon_iqr)]
-    if not core:
-        return None
-    lats = [p[0] for p in core]
-    lons = [p[1] for p in core]
-    return (min(lats) - margin, max(lats) + margin,
-            min(lons) - margin, max(lons) + margin)
+    Έλεγχος ανά εγγραφή, ανεξάρτητος από τις υπόλοιπες: συγκρίνει τις
+    συντεταγμένες υψηλής ακρίβειας με το κέντρο της ΔΗΛΩΜΕΝΗΣ Περιφερειακής
+    Ενότητας (2ψήφιο πρόθεμα του muni_code). Αν απέχουν > distance_km, η άδεια
+    βρίσκεται μακριά από την περιοχή που δήλωσε ο αιτών — τυπική περίπτωση λάθος
+    χρέωσης σε ομώνυμο δήμο (π.χ. κτίσμα Ηρακλείου Κρήτης χρεωμένο στον δήμο
+    Ηρακλείου/Ν. Ηρακλείου Αττικής).
 
-
-def area_flag(row, bbox):
-    """Flag «εκτός περιοχής αναζήτησης» αν η εγγραφή βρίσκεται εκτός bbox.
-
-    Επιστρέφει string ή None. Αγνοεί εγγραφές χωρίς αξιόπιστες συντεταγμένες
-    (precision «δήμος» ή καθόλου geocoding) — μόνο «κτίσμα», «οδός» κ.λπ."""
-    if bbox is None or not row.get("lat"):
+    Είναι άτρωτο στο ποσοστό «μόλυνσης» του result set (κρίνει κάθε εγγραφή
+    μόνη της) και στην ομωνυμία του Nominatim (το άγκυρα είναι ο κωδικός/ΠΕ,
+    όχι το αμφίσημο όνομα δήμου). Επιστρέφει string ή None."""
+    if not row.get("lat") or row.get("precision") not in _HIGH_PREC:
         return None
-    if row.get("precision") not in _HIGH_PREC:
+    code = row.get("muni_code") or ""
+    center = PE_CENTROIDS.get(code[:2])
+    if not center:
         return None
-    lat, lon = row["lat"], row["lon"]
-    lat_min, lat_max, lon_min, lon_max = bbox
-    if lat_min <= lat <= lat_max and lon_min <= lon <= lon_max:
+    dist = _haversine(row["lat"], row["lon"], center[0], center[1])
+    if dist <= distance_km:
         return None
-    center_lat = (lat_min + lat_max) / 2
-    center_lon = (lon_min + lon_max) / 2
-    dist = _haversine(lat, lon, center_lat, center_lon)
     return f"~{dist:.0f}km εκτός περιοχής αναζήτησης"

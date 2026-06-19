@@ -42,6 +42,15 @@ def permit_kind(subject):
     """
     subj = normalize(subject)
     description = subj.split(":", 1)[1].strip() if ":" in subj else subj
+    head = subj.split(":", 1)[0]
+    # Ρητός αποκλεισμός των μη-τελικών πράξεων: η επικεφαλίδα (πριν το πρώτο «:»)
+    # ξεκινά πάντα με τη λέξη-είδος, χωρίς κωδικό-πρόθεμα — επιβεβαιωμένο σε
+    # 16.823 πραγματικά subjects της Διαύγειας (κωδικοί τύπου «6.4.6.1»
+    # εμφανίζονται μόνο ΜΕΣΑ στην περιγραφή). Ο φύλακας κάνει την πρόθεση ρητή
+    # και ανθεκτική, αντί να βασίζεται στη σειρά των startswith παρακάτω.
+    for excluded in ("ΠΡΟΕΓΚΡΙΣΗ", "ΑΝΑΘΕΩΡΗΣΗ", "ΕΝΗΜΕΡΩΣΗ", "ΕΓΚΡΙΣΗ ΕΚΤΕΛΕΣΗΣ"):
+        if head.startswith(excluded):
+            return None
     if subj.startswith("ΑΔΕΙΑ ΚΑΤΕΔΑΦΙΣΗΣ"):
         return KIND_KATEDAFISI
     if subj.startswith("ΟΙΚΟΔΟΜΙΚΗ ΑΔΕΙΑ") and DEMOLITION_RE.search(description):

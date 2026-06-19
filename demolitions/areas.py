@@ -88,7 +88,7 @@ def load_kallikratis(cache_dir):
 
 
 def municipality_labels(muni_codes, cache_dir):
-    """Display/geocode labels ανά κωδικό δήμου, με διάκριση ομώνυμων."""
+    """Display labels ανά κωδικό δήμου, με διάκριση ομώνυμων."""
     from .greek import dimos_display, greek_title  # εδώ λόγω κυκλικού import
 
     regions, munis, muni_region = load_kallikratis(cache_dir)
@@ -97,14 +97,12 @@ def municipality_labels(muni_codes, cache_dir):
     for code in muni_codes:
         label = munis[code]
         display = dimos_display(label)
-        geocode = display
         if label in dups:
             region = greek_title(
                 regions[muni_region[code]].removeprefix("ΠΕΡΙΦΕΡΕΙΑ ").strip()
             )
             display += f" ({region})"
-            geocode = f"{geocode} {region}"
-        out[code] = {"display": display, "geocode": geocode}
+        out[code] = {"display": display}
     return out
 
 

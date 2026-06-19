@@ -17,7 +17,7 @@ from pathlib import Path
 
 from .areas import municipality_labels, normalize, resolve_area
 from .diavgeia import KIND_KATEDAFISI, issue_date, permit_kind, search_permits
-from .geocode import Geocoder, area_flag, rows_centroid_bbox
+from .geocode import Geocoder, row_out_of_region
 from .greek import pretty_area
 from .output import write_xlsx
 from .pdfparse import parse_decision
@@ -80,6 +80,30 @@ def _write_run_files(run_dir, rows, manifest):
         json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
+def _add_flag(row, flag):
+    if flag and flag not in (row["flags"] or ""):
+        row["flags"] = (row["flags"] + "; " if row["flags"] else "") + flag
+        return True
+    return False
+
+
+def _flag_out_of_region(rows):
+    """Σημαίνει εγγραφές γεωγραφικά εκτός της ζητούμενης περιοχής. Επιστρέφει
+    το πλήθος που σημάνθηκαν.
+
+    Έλεγχος ανά εγγραφή (row_out_of_region): σύγκριση των συντεταγμένων με το
+    κέντρο της ΔΗΛΩΜΕΝΗΣ Περιφερειακής Ενότητας του ίδιου του record. Είναι
+    άτρωτος στο ποσοστό «μόλυνσης» και στις ομωνυμίες, και — επειδή κρίνει κάθε
+    εγγραφή μόνη της ως προς τη δική της ΠΕ — δεν παράγει ψευδώς θετικά σε
+    γεωγραφικά ευρείες περιφέρειες (π.χ. απομακρυσμένα νησιά του Ν. Αιγαίου),
+    σε αντίθεση με ένα bbox πάνω σε ολόκληρο το result set."""
+    n_out = 0
+    for row in rows:
+        if _add_flag(row, row_out_of_region(row)):
+            n_out += 1
+    return n_out
+
+
 def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
                  log=print, step=None, cancel=None, pdf_callback=None,
                  free_cache=False):
@@ -106,7 +130,8 @@ def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
                                progress=search_progress)
     log(f"Σύνολο: {len(decisions)} άδειες κατεδάφισης")
     if decisions:
-        est_mb = max(1, round(len(decisions) * 300 / 1024))
+        # μετρημένο μέσο ~3 MB/PDF στη Διαύγεια (παλιά εκτίμηση 300 KB ήταν ~10x χαμηλή)
+        est_mb = max(1, round(len(decisions) * 3000 / 1024))
         log(f"Εκτιμώμενο μέγεθος PDF: ~{est_mb} MB")
     if not decisions:
         raise NoPermitsFound("Καμία άδεια στο διάστημα/περιοχή.")
@@ -132,7 +157,6 @@ def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
         row["year"] = dt.year
         row["muni_code"] = muni_code
         row["dimos"] = muni_labels[muni_code]["display"]
-        row["dimos_query"] = muni_labels[muni_code]["geocode"]
         row["eidos"] = permit_kind(d.get("subject", "")) or KIND_KATEDAFISI
         flags = []
         # ίδιο κτίσμα με >1 τελικές άδειες (επανεκδόσεις) — συχνό φαινόμενο
@@ -158,7 +182,7 @@ def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
             ok = sum(1 for r in rows if r["parse_ok"])
             log(f"  {i}/{len(decisions)} (επιτυχής ανάλυση: {ok})")
     del decisions   # ελευθερώνει μνήμη Διαύγειας πριν δημιουργηθεί το xlsx
-    n_dups = sum(1 for r in rows if r["flags"])
+    n_dups = sum(1 for r in rows if "πιθανό διπλό" in r["flags"])
     if n_dups:
         log(f"  Σημειώθηκαν {n_dups} πιθανά διπλά (ίδιος δήμος/διεύθυνση/περιγραφή).")
     log(f"PDF: {pdf_root}/ (αντιγράφηκαν {copied})")
@@ -205,27 +229,18 @@ def enrich_geocode(run_dir, *, cache_dir, log=print, step=None, cancel=None):
                 row["lat"], row["lon"], row["precision"] = \
                     geocoder.geocode_row(row, row["dimos"])
             # ο έλεγχος «εκτός περιοχής» (ομώνυμοι δήμοι κ.λπ.) γίνεται μετά
-            # τον βρόχο με το bbox των ίδιων των σημείων — χωρίς κλήσεις
-            # Nominatim ανά δήμο (που καθυστερούσαν δραματικά τη φάση αυτή)
+            # τον βρόχο — χωρίς κλήσεις Nominatim ανά δήμο (που καθυστερούσαν
+            # δραματικά τη φάση αυτή)
             if i % 25 == 0 or i == len(rows):
                 hit = sum(1 for r in rows[:i] if r.get("lat"))
                 log(f"  {i}/{len(rows)} (με συντεταγμένες: {hit})")
         completed = True
-        # δεύτερο πέρασμα: ευρωστό bbox από τις ίδιες τις εγγραφές για να
-        # εντοπιστούν σημεία που βρίσκονται εκτός της ζητούμενης περιοχής
-        # (π.χ. άδειες Κρήτης σε αναζήτηση Αττικής λόγω ομώνυμου δήμου).
-        # Δεν απαιτεί επιπλέον κλήσεις Nominatim — IQR αποκλείει τα outliers.
-        bbox = rows_centroid_bbox(rows)
-        if bbox:
-            n_out = 0
-            for row in rows:
-                flag = area_flag(row, bbox)
-                if flag and flag not in (row["flags"] or ""):
-                    row["flags"] = (row["flags"] + "; " if row["flags"]
-                                    else "") + flag
-                    n_out += 1
-            if n_out:
-                log(f"  {n_out} εγγραφές εκτός γεωγραφικών ορίων αναζήτησης.")
+        # δεύτερο πέρασμα: εντοπισμός εγγραφών γεωγραφικά εκτός της ζητούμενης
+        # περιοχής (π.χ. άδειες Κρήτης σε αναζήτηση Αττικής λόγω ομώνυμου δήμου).
+        # Χωρίς επιπλέον κλήσεις Nominatim.
+        n_out = _flag_out_of_region(rows)
+        if n_out:
+            log(f"  {n_out} εγγραφές εκτός γεωγραφικών ορίων αναζήτησης.")
     finally:
         geocoder.close()
         manifest["geocoded"] = completed

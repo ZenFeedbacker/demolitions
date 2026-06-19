@@ -57,14 +57,24 @@ def download_pdf(decision, cache_dir):
     url = _pdf_url(decision["ada"])
     for attempt in range(3):
         try:
-            r = session.get(url, timeout=120)
-            r.raise_for_status()
-            if not r.content.startswith(b"%PDF"):
-                return None
-            path.write_bytes(r.content)
+            # stream ώστε να μη φορτώνεται όλο το PDF (~3 MB) + αντίγραφο στη
+            # μνήμη ανά άδεια· ελέγχουμε το %PDF στο πρώτο chunk και γράφουμε
+            # το υπόλοιπο απευθείας στον δίσκο (όπως το webui:_diavgeia_pdf)
+            with session.get(url, timeout=120, stream=True) as r:
+                r.raise_for_status()
+                chunks = r.iter_content(65536)
+                first = next(chunks, b"")
+                if not first.startswith(b"%PDF"):
+                    return None
+                with open(path, "wb") as f:
+                    f.write(first)
+                    for chunk in chunks:
+                        f.write(chunk)
             time.sleep(0.4)
             return path
         except Exception:
+            # μη αφήνεις μερικό αρχείο πίσω σε αποτυχία (π.χ. διακοπή streaming)
+            path.unlink(missing_ok=True)
             if attempt == 2:
                 return None
             time.sleep(2 ** attempt)

@@ -20,7 +20,8 @@ from demolitions.areas import (AreaError, list_areas, municipality_labels,
 from demolitions.diavgeia import (KIND_KATEDAFISI, KIND_OIKODOMIKI,
                                    _search_query, issue_date, permit_kind)
 from demolitions.egsa87 import egsa87_to_wgs84
-from demolitions.geocode import _poli_variants, _strip_dimos
+from demolitions.geocode import (PE_CENTROIDS, _poli_variants, _strip_dimos,
+                                  row_out_of_region)
 from demolitions.greek import dimos_display, greek_title, pretty_area
 from demolitions.output import COLUMNS, write_xlsx
 from demolitions.pdfparse import (_clean, _pdf_url, detect_extent, detect_floors,
@@ -85,8 +86,6 @@ class TestResolveArea(unittest.TestCase):
         labels = municipality_labels(("4604", "7101"), CACHE)
         self.assertEqual(labels["4604"]["display"], "Δήμος Ηρακλείου (Αττικής)")
         self.assertEqual(labels["7101"]["display"], "Δήμος Ηρακλείου (Κρήτης)")
-        self.assertEqual(labels["4604"]["geocode"], "Δήμος Ηρακλείου Αττικής")
-        self.assertEqual(labels["7101"]["geocode"], "Δήμος Ηρακλείου Κρήτης")
 
 
 class TestGreek(unittest.TestCase):
@@ -223,6 +222,38 @@ class TestPermitKind(unittest.TestCase):
                   "Έγκριση Εκτέλεσης Εργασιών: ΚΑΤΕΔΑΦΙΣΗ ΕΠΙΚΙΝΔΥΝΟΥ"):
             self.assertIsNone(permit_kind(s), s)
 
+    def test_dotted_code_in_description_does_not_break_classification(self):
+        # κωδικός με τελείες ΜΕΣΑ στην περιγραφή (μετά το «:») — δεν επηρεάζει
+        # την επικεφαλίδα, άρα η ταξινόμηση παραμένει σωστή (πραγματικά subjects)
+        self.assertEqual(permit_kind(
+            "Άδεια Κατεδάφισης (ν.4759/2020): ΑΔΕΙΑ ΚΑΤΕΔΑΦΙΣΗΣ ΓΙΑ ΤΑ "
+            "ΚΤΙΡΙΑ 5.0 - 5.0.1 - 5.1 - 7.3."), KIND_KATEDAFISI)
+        self.assertEqual(permit_kind(
+            "Οικοδομική Άδεια (ν.4759/2020): ΚΑΤΕΔΑΦΙΣΗ ΚΤΙΡΙΟΥ 6.2 ΚΑΙ "
+            "ΑΝΕΓΕΡΣΗ"), KIND_OIKODOMIKI)
+
+    def test_excluded_kinds_with_dotted_code_stay_excluded(self):
+        # οι αποκλεισμένες πράξεις παραμένουν αποκλεισμένες, ακόμη κι όταν η
+        # περιγραφή περιέχει κωδικό με τελείες (πραγματικά subjects)
+        for s in (
+            "Έγκριση Εκτέλεσης Εργασιών: ΚΑΤΕΔΑΦΙΣΗ ΕΠΙΚΙΝΔΥΝΟΥ ΚΤΙΣΜΑΤΟΣ "
+            "ΒΑΣΕΙ ΤΗΣ ΥΠ' ΑΡΙΘΜΟΝ 4087-3.7.2024",
+            "Προέγκριση Οικοδομικής Αδείας (ν.4759/2020): ΚΑΤΕΔΑΦΙΣΗ ΠΑΛΑΙΩΝ "
+            "ΚΤΙΣΜΑΤΩΝ & ΑΝΕΓΕΡΣΗ",
+            "Ενημέρωση Άδειας Κατεδάφισης (ν.4759/2020): ΚΑΤΕΔΑΦΙΣΗ",
+            "Αναθεώρηση Άδειας Κατεδάφισης χωρίς μεταβολή κάλυψης/δόμησης: "
+            "ΚΑΤΕΔΑΦΙΣΗ",
+        ):
+            self.assertIsNone(permit_kind(s), s)
+
+    def test_leading_code_prefix_does_not_occur_in_real_data(self):
+        # Τεκμηρίωση επιβεβαιωμένης παραδοχής: subject με κωδικό-πρόθεμα πριν τη
+        # λέξη-είδος ΔΕΝ υπάρχει στα πραγματικά δεδομένα της Διαύγειας (έλεγχος
+        # σε 16.823 subjects). Καρφώνουμε την ΤΡΕΧΟΥΣΑ συμπεριφορά: επιστρέφει
+        # None, αφού η επικεφαλίδα δεν ξεκινά με «ΑΔΕΙΑ ΚΑΤΕΔΑΦΙΣΗΣ».
+        self.assertIsNone(permit_kind(
+            "6.4.6.1 Άδεια Κατεδάφισης: ΚΑΤΕΔΑΦΙΣΗ ΔΙΩΡΟΦΗΣ"))
+
     def test_search_query_is_broad_enough_for_bundled_permits(self):
         q = _search_query("2024-01-01", "2024-06-30")
         self.assertIn('subject:"Κατεδάφιση"', q)
@@ -305,6 +336,67 @@ class TestPdfText(unittest.TestCase):
         fake = mock.Mock(returncode=1, stdout=b"")
         with mock.patch.object(pdfparse.subprocess, "run", return_value=fake):
             self.assertIsNone(pdfparse.pdf_text("/x.pdf"))
+
+
+class _FakeStreamResponse:
+    """Εικονική streaming απόκριση requests: υποστηρίζει context manager και
+    iter_content, αλλά το .content σκάει — ώστε το test να αποδεικνύει ότι το
+    download_pdf ΔΕΝ υλοποιεί ολόκληρο το σώμα στη μνήμη."""
+
+    def __init__(self, body, chunk=65536):
+        self._body, self._chunk = body, chunk
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def raise_for_status(self):
+        pass
+
+    def iter_content(self, chunk_size):
+        for i in range(0, len(self._body), chunk_size):
+            yield self._body[i:i + chunk_size]
+
+    @property
+    def content(self):
+        raise AssertionError("το download_pdf δεν πρέπει να αγγίζει το .content")
+
+
+class TestDownloadPdf(unittest.TestCase):
+    def test_streams_to_disk_without_loading_content(self):
+        from unittest import mock
+        from demolitions import pdfparse
+        body = b"%PDF-1.4\n" + b"x" * (65536 * 2 + 17)   # >2 chunks
+        decision = {"ada": "ΑΔΑ-STREAM"}
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(
+                    pdfparse.session, "get",
+                    return_value=_FakeStreamResponse(body)) as get, \
+                 mock.patch.object(pdfparse.time, "sleep"):
+                path = pdfparse.download_pdf(decision, tmp)
+            # (a) το PDF γράφτηκε σωστά, με τα ακριβή bytes
+            self.assertIsNotNone(path)
+            self.assertEqual(Path(path).read_bytes(), body)
+            # (b) η λήψη ζητήθηκε με stream=True
+            self.assertTrue(get.called)
+            self.assertEqual(get.call_args.kwargs.get("stream"), True)
+            # (c) το .content (πλήρες σώμα) δεν προσπελάστηκε — αλλιώς ο fake
+            # θα είχε σκάσει με AssertionError πριν φτάσουμε εδώ
+
+    def test_non_pdf_leaves_no_file_and_returns_none(self):
+        from unittest import mock
+        from demolitions import pdfparse
+        decision = {"ada": "ΑΔΑ-HTML"}
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(
+                    pdfparse.session, "get",
+                    return_value=_FakeStreamResponse(b"<html>not a pdf</html>")):
+                path = pdfparse.download_pdf(decision, tmp)
+            self.assertIsNone(path)
+            self.assertEqual(
+                list((Path(tmp) / "pdf").glob("*.pdf")), [])   # χωρίς υπόλειμμα
 
 
 class TestGeocodeHelpers(unittest.TestCase):
@@ -592,71 +684,17 @@ class TestRunPipelinePdfCallback(unittest.TestCase):
             self.assertTrue(any("Εκτιμώμενο μέγεθος PDF" in m for m in logs))
 
 
-class TestAreaBboxFlag(unittest.TestCase):
-    """rows_centroid_bbox + area_flag — γεωγραφική συνέπεια εγγραφών."""
-
-    def _row(self, lat, lon, precision="κτίσμα (PDF)", flags=""):
-        return {"lat": lat, "lon": lon, "precision": precision, "flags": flags}
-
-    def test_bbox_from_clustered_rows(self):
-        from demolitions.geocode import rows_centroid_bbox
-        rows = [self._row(38.0 + i * 0.05, 23.7) for i in range(10)]
-        bbox = rows_centroid_bbox(rows)
-        self.assertIsNotNone(bbox)
-        lat_min, lat_max, lon_min, lon_max = bbox
-        for r in rows:
-            self.assertGreater(r["lat"], lat_min)
-            self.assertLess(r["lat"], lat_max)
-
-    def test_bbox_excludes_outlier(self):
-        """Ένα outlier σε Κρήτη δεν επεκτείνει το bbox της Αττικής."""
-        from demolitions.geocode import rows_centroid_bbox
-        rows = [self._row(38.0 + i * 0.02, 23.7) for i in range(20)]
-        rows.append(self._row(35.3, 25.1))   # outlier — Κρήτη
-        bbox = rows_centroid_bbox(rows)
-        self.assertIsNotNone(bbox)
-        lat_min, _, _, _ = bbox
-        # bbox δεν πρέπει να εκτείνεται μέχρι την Κρήτη (35.3° - margin 0.5° = 34.8°)
-        self.assertGreater(lat_min, 35.5, f"lat_min={lat_min:.2f} (Κρήτη διέρρευσε στο bbox)")
-
-    def test_area_flag_outside_bbox(self):
-        from demolitions.geocode import area_flag
-        bbox = (37.0, 39.0, 22.5, 25.0)   # Αττική + margin
-        row = self._row(35.3, 25.1)        # Κρήτη
-        flag = area_flag(row, bbox)
-        self.assertIsNotNone(flag)
-        self.assertIn("εκτός περιοχής αναζήτησης", flag)
-        self.assertIn("km", flag)
-
-    def test_area_flag_inside_bbox(self):
-        from demolitions.geocode import area_flag
-        bbox = (37.0, 39.0, 22.5, 25.0)
-        self.assertIsNone(area_flag(self._row(38.0, 23.7), bbox))
-
-    def test_area_flag_low_precision_ignored(self):
-        """Precision «δήμος» (centroid placeholder) δεν ελέγχεται."""
-        from demolitions.geocode import area_flag
-        bbox = (37.0, 39.0, 22.5, 25.0)
-        self.assertIsNone(area_flag(self._row(35.3, 25.1, precision="δήμος"), bbox))
-
-    def test_area_flag_no_lat(self):
-        from demolitions.geocode import area_flag
-        bbox = (37.0, 39.0, 22.5, 25.0)
-        self.assertIsNone(area_flag(
-            {"lat": None, "lon": None, "precision": "κτίσμα (PDF)", "flags": ""}, bbox))
-
-    def test_bbox_needs_5_points(self):
-        from demolitions.geocode import rows_centroid_bbox
-        rows = [self._row(38.0, 23.7) for _ in range(4)]
-        self.assertIsNone(rows_centroid_bbox(rows))
+class TestEnrichGeocodeOutOfRegion(unittest.TestCase):
+    """enrich_geocode -> _flag_out_of_region: ολοκληρωμένος έλεγχος ότι η
+    εγγραφή εκτός περιοχής σημαίνεται ΑΚΡΙΒΩΣ μία φορά (per-row, χωρίς bbox)."""
 
     def test_enrich_geocode_flags_out_of_area(self):
-        """enrich_geocode σημαίνει εγγραφές εκτός γεωγραφικών ορίων — χωρίς
-        καμία κλήση Nominatim (όλες οι εγγραφές έχουν ήδη συντεταγμένες PDF)."""
+        """Κτίσμα Κρήτης χρεωμένο σε δήμο Αθηνών σημαίνεται· οι αττικές όχι.
+        Χωρίς καμία κλήση Nominatim (όλες οι εγγραφές έχουν συντεταγμένες PDF)."""
         from demolitions import pipeline
         base = {
             "url": "https://diavgeia.gov.gr/decision/view/X",
-            "dimos": "Δήμος Αθηναίων", "dimos_query": "Δήμος Αθηναίων",
+            "dimos": "Δήμος Αθηναίων",
             "precision": "κτίσμα (PDF)", "flags": "", "date": "2021-01-15",
             "year": 2021, "muni_code": "4505", "eidos": "κατεδάφιση",
             "dim_enotita": "", "poli": "", "odos": "", "ar_apo": "",
@@ -682,10 +720,183 @@ class TestAreaBboxFlag(unittest.TestCase):
             result_rows = json.loads((run_dir / "rows.json").read_text("utf-8"))
         crete = next(r for r in result_rows if r["ada"] == "ΚΡΗΤΗ")
         self.assertIn("εκτός περιοχής αναζήτησης", crete["flags"])
+        # ακριβώς ΕΝΑ flag «εκτός περιοχής» (όχι διπλό από δεύτερο πέρασμα)
+        self.assertEqual(crete["flags"].count("εκτός περιοχής αναζήτησης"), 1,
+                         crete["flags"])
         attica = [r for r in result_rows if r["ada"] != "ΚΡΗΤΗ"]
         for r in attica:
             self.assertNotIn("εκτός περιοχής", r["flags"],
                              f"false positive για {r['ada']}")
+
+
+class TestRowOutOfRegion(unittest.TestCase):
+    """row_out_of_region — έλεγχος ανά εγγραφή με βάση τον κωδικό ΠΕ.
+
+    Άγκυρα είναι το 2ψήφιο πρόθεμα του muni_code (Περιφερειακή Ενότητα), όχι το
+    αμφίσημο όνομα δήμου — άρα άτρωτο στις ομωνυμίες και στο ποσοστό μόλυνσης."""
+
+    # κέντρα από το πακεταρισμένο gazetteer (offline, ντετερμινιστικά)
+    ATTICA = (38.0, 23.7)        # ~ΠΕ 46 (Β. Τομέας Αθηνών)
+    CRETE = (35.34, 25.15)       # πραγματικό κτίσμα Ηρακλείου Κρήτης
+    RHODES = (36.43, 28.22)      # Νότιο Αιγαίο
+
+    def _row(self, lat, lon, muni_code, precision="κτίσμα (PDF)"):
+        return {"lat": lat, "lon": lon, "muni_code": muni_code,
+                "precision": precision, "flags": ""}
+
+    def test_bundled_gazetteer_covers_every_pe_prefix(self):
+        # κάθε πρόθεμα του PREFIX_PE πρέπει να έχει κέντρο, εντός ορίων Ελλάδας
+        from demolitions.areas import PREFIX_PE
+        for prefix in PREFIX_PE:
+            self.assertIn(prefix, PE_CENTROIDS, prefix)
+        for prefix, (lat, lon) in PE_CENTROIDS.items():
+            self.assertTrue(34.5 <= lat <= 42.0 and 19.0 <= lon <= 30.1,
+                            f"{prefix}: ({lat},{lon}) εκτός Ελλάδας")
+
+    def test_crete_building_tagged_to_attica_flagged(self):
+        # το πραγματικό παράδειγμα: κτίσμα Κρήτης χρεωμένο στον δήμο Ηρακλείου
+        # Αττικής (κωδικός 4604, ΠΕ 46) -> ~323 km -> σημαίνεται
+        flag = row_out_of_region(self._row(*self.CRETE, muni_code="4604"))
+        self.assertIsNotNone(flag)
+        self.assertIn("εκτός περιοχής αναζήτησης", flag)
+        self.assertIn("km", flag)
+
+    def test_all_25_flagged_regardless_of_total_size(self):
+        """Acceptance §8.1: και τα 25 Κρήτης σημαίνονται ανεξάρτητα από το
+        ποσοστό μόλυνσης — συμπεριλαμβανομένων των περιπτώσεων 29–56% όπου το
+        παλιό bbox+IQR σήμαινε 0/25."""
+        import random
+        rng = random.Random(0)
+
+        def crete():
+            return (35.34 + rng.uniform(-0.1, 0.1),
+                    25.15 + rng.uniform(-0.1, 0.1))
+
+        def attica():
+            return (38.0 + rng.uniform(-0.4, 0.4),
+                    23.7 + rng.uniform(-0.3, 0.3))
+
+        for n_att in (1000, 100, 60, 40, 20):       # 2.4% .. 55.6% μόλυνση
+            attica_rows = [self._row(*attica(), muni_code="4604")
+                           for _ in range(n_att)]
+            crete_rows = [self._row(*crete(), muni_code="4604")
+                          for _ in range(25)]
+            flagged = sum(1 for r in crete_rows if row_out_of_region(r))
+            self.assertEqual(flagged, 25, f"n_att={n_att}: {flagged}/25")
+            # καμία αττική εγγραφή δεν σημαίνεται (κανένα ψευδώς θετικό)
+            fp = sum(1 for r in attica_rows if row_out_of_region(r))
+            self.assertEqual(fp, 0, f"n_att={n_att}: {fp} ψευδώς θετικά")
+
+    def test_generalized_non_crete_case(self):
+        """Acceptance §8.2: γενικευμένο — δήμος Λάρισας (ηπειρωτική ΠΕ 22)
+        αλλά κτίσμα στη Ρόδο (Νότιο Αιγαίο) -> σημαίνεται, χωρίς ειδική λογική
+        Κρήτης/Ηρακλείου."""
+        flag = row_out_of_region(self._row(*self.RHODES, muni_code="2201"))
+        self.assertIsNotNone(flag)
+        self.assertIn("εκτός περιοχής αναζήτησης", flag)
+
+    def test_clean_single_region_no_false_positive(self):
+        """Acceptance §8.3: καθαρή αναζήτηση μίας περιφέρειας — τίποτα δεν
+        σημαίνεται."""
+        import random
+        rng = random.Random(3)
+        for _ in range(50):
+            r = self._row(38.0 + rng.uniform(-0.4, 0.4),
+                          23.7 + rng.uniform(-0.3, 0.3), muni_code="4604")
+            self.assertIsNone(row_out_of_region(r))
+
+    def test_near_border_not_flagged(self):
+        """Acceptance §8.3: εγγραφή στα όρια επιμήκους ΠΕ δεν υπερ-σημαίνεται.
+        Ορεστιάδα (~143 km από το κέντρο της ΠΕ Έβρου) μένει εντός."""
+        r = self._row(41.50, 26.53, muni_code="0303")   # Δήμος Ορεστιάδας
+        self.assertIsNone(row_out_of_region(r))
+
+    def test_low_precision_and_missing_data_ignored(self):
+        # χωρίς αξιόπιστες συντεταγμένες ή χωρίς κωδικό -> δεν ελέγχεται
+        self.assertIsNone(row_out_of_region(
+            self._row(*self.CRETE, muni_code="4604", precision="δήμος")))
+        self.assertIsNone(row_out_of_region(
+            {"lat": None, "lon": None, "muni_code": "4604",
+             "precision": "κτίσμα (PDF)", "flags": ""}))
+        self.assertIsNone(row_out_of_region(
+            self._row(*self.CRETE, muni_code="")))      # χωρίς κωδικό
+
+
+class TestFlagOutOfRegionPipeline(unittest.TestCase):
+    """_flag_out_of_region — code-anchored έλεγχος ανά εγγραφή στο pipeline."""
+
+    def _base(self, muni_code):
+        return {"url": "https://diavgeia.gov.gr/decision/view/X",
+                "dimos": "Δ", "precision": "κτίσμα (PDF)",
+                "flags": "", "date": "2021-01-15", "year": 2021,
+                "muni_code": muni_code, "eidos": "κατεδάφιση",
+                "dim_enotita": "", "poli": "", "odos": "", "ar_apo": "",
+                "ar_eos": "", "ot": "", "kaek": "", "perigrafi": "",
+                "orofoi": None, "ektasi": "ολική", "nonbuilding": False,
+                "parse_ok": True, "pdf_path": "", "dimos_pdf": ""}
+
+    def test_heavy_contamination_all_flagged(self):
+        """§5/§8.1: 25 Κρήτης + 40 Αττικής (38% μόλυνση) — όλα σημαίνονται,
+        καμία αττική εγγραφή δεν σημαίνεται ψευδώς."""
+        import random
+        from demolitions.pipeline import _flag_out_of_region
+        rng = random.Random(7)
+        rows = [{**self._base("4604"), "ada": f"ΑΤΤ{i}",
+                 "lat": 38.0 + rng.uniform(-0.4, 0.4),
+                 "lon": 23.7 + rng.uniform(-0.3, 0.3)} for i in range(40)]
+        rows += [{**self._base("4604"), "ada": f"ΚΡΗ{i}",
+                  "lat": 35.34 + rng.uniform(-0.1, 0.1),
+                  "lon": 25.15 + rng.uniform(-0.1, 0.1)} for i in range(25)]
+        n_out = _flag_out_of_region(rows)
+        crete = [r for r in rows if r["ada"].startswith("ΚΡΗ")]
+        attica = [r for r in rows if r["ada"].startswith("ΑΤΤ")]
+        self.assertEqual(sum(1 for r in crete
+                             if "εκτός περιοχής" in r["flags"]), 25)
+        self.assertGreaterEqual(n_out, 25)
+        for r in attica:
+            self.assertNotIn("εκτός περιοχής", r["flags"], r["ada"])
+
+    def test_whole_country_no_false_positives(self):
+        """§8.3: αναζήτηση «Ελλάδα» — κάθε εγγραφή κοντά στη δική της ΠΕ· ένα
+        απομακρυσμένο νησί ΔΕΝ σημαίνεται (ο per-row έλεγχος κρίνει κάθε εγγραφή
+        ως προς τη δική της ΠΕ, χωρίς bbox πάνω σε όλο το result set)."""
+        from demolitions.pipeline import _flag_out_of_region
+        rows = [
+            {**self._base("4604"), "ada": "ΑΘΗΝΑ", "lat": 38.0, "lon": 23.75},
+            {**self._base("0701"), "ada": "ΘΕΣ", "lat": 40.64, "lon": 22.94},
+            {**self._base("7101"), "ada": "ΗΡΑΚΛΕΙΟ", "lat": 35.34, "lon": 25.13},
+            {**self._base("6901"), "ada": "ΡΟΔΟΣ", "lat": 36.43, "lon": 28.22},
+            {**self._base("2001"), "ada": "ΗΓΟΥΜ", "lat": 39.50, "lon": 20.27},
+            {**self._base("0201"), "ada": "ΔΡΑΜΑ", "lat": 41.15, "lon": 24.14},
+        ]
+        n_out = _flag_out_of_region(rows)
+        self.assertEqual(n_out, 0)
+        for r in rows:
+            self.assertNotIn("εκτός περιοχής", r["flags"], r["ada"])
+
+    def test_wide_single_region_aegean_no_false_positives(self):
+        """Regression (review P1-1): «Περιφέρεια Νοτίου Αιγαίου» απλώνεται ~400
+        km (Κυκλάδες -> Δωδεκάνησα). Οι νόμιμες απομακρυσμένες νήσοι (Ρόδος,
+        Κως, Κάρπαθος, Καστελλόριζο), σωστά χρεωμένες στη δική τους ΠΕ, ΔΕΝ
+        πρέπει να σημαίνονται ως «εκτός περιοχής» — το παλιό bbox τις σήμαινε."""
+        import random
+        from demolitions.pipeline import _flag_out_of_region
+        rng = random.Random(11)
+        # μάζα Κυκλάδων (θα έθετε εκεί το κέντρο ενός bbox)
+        rows = [{**self._base("6701"), "ada": f"ΝΑΞ{i}",   # ΠΕ Νάξου
+                 "lat": 37.10 + rng.uniform(-0.2, 0.2),
+                 "lon": 25.38 + rng.uniform(-0.2, 0.2)} for i in range(40)]
+        # νόμιμες απομακρυσμένες νήσοι, σωστός κωδικός ΠΕ
+        far = [("6901", "ΡΟΔΟΣ", 36.43, 28.22),     # ΠΕ Ρόδου
+               ("6401", "ΚΩΣ", 36.89, 27.29),        # ΠΕ Κω
+               ("6201", "ΚΑΡΠΑΘΟΣ", 35.51, 27.21),   # ΠΕ Καρπάθου
+               ("6901", "ΚΑΣΤΕΛ", 36.15, 29.59)]     # Καστελλόριζο (ΠΕ Ρόδου)
+        for code, ada, lat, lon in far:
+            rows.append({**self._base(code), "ada": ada, "lat": lat, "lon": lon})
+        n_out = _flag_out_of_region(rows)
+        self.assertEqual(n_out, 0, "ψευδώς θετικά σε ευρεία περιφέρεια Αιγαίου")
+        for r in rows:
+            self.assertNotIn("εκτός περιοχής", r["flags"], r["ada"])
 
 
 class TestR2Storage(unittest.TestCase):
@@ -922,6 +1133,82 @@ class TestR2Storage(unittest.TestCase):
             kept = {m["run_id"]: m.get("has_pdfs") for m in store.list_runs()}
             self.assertEqual(kept["new"], True)
             self.assertEqual(kept["old"], False)
+
+    def test_enforce_cap_reconciles_stale_has_pdfs(self):
+        """has_pdfs=True αλλά τα PDF σβήστηκαν out-of-band (pdf_bytes==0) ->
+        το enforce_pdf_cap διορθώνει τη σημαία σε False χωρίς να χάνει
+        μεταδεδομένα (αυτο-θεραπεία στο επόμενο πέρασμα)."""
+        from moto import mock_aws
+        with mock_aws():
+            import boto3
+            boto3.client("s3", region_name="us-east-1").create_bucket(Bucket="demo-test-bucket")
+            from demolitions.storage import R2Storage
+            store = R2Storage("demo-test-bucket", "acc", "k", "s", pdf_cap=10 ** 9,
+                              endpoint_url="https://s3.amazonaws.com")
+
+            self._make_staging(store, "stale", 3,
+                               created_at="2024-01-01T10:00:00+00:00")
+            store.save_run("stale")
+            # out-of-band διαγραφή των PDF· το run.json μένει με has_pdfs=True
+            store.delete_pdfs("stale")
+            self.assertTrue(store.read_manifest("stale")["has_pdfs"])  # μπαγιάτικο
+            self.assertEqual(len(list(store.iter_pdfs("stale"))), 0)
+
+            store.enforce_pdf_cap()
+
+            m = store.read_manifest("stale")
+            self.assertFalse(m["has_pdfs"])           # διορθώθηκε
+            self.assertEqual(m["n_rows"], 3)          # μεταδεδομένα ανέπαφα
+            self.assertEqual(len(list(store.iter_pdfs("stale"))), 0)
+
+    def test_enforce_cap_keeps_valid_newest_reconciles_stale_oldest(self):
+        """Δύο run, μεγάλο cap: το νεότερο με ανέπαφα PDF κρατά has_pdfs=True
+        και τα αντικείμενά του· το παλαιότερο με out-of-band σβησμένα PDF
+        διορθώνεται σε False — δεν θεωρείται «χωράει» ψευδώς."""
+        from moto import mock_aws
+        with mock_aws():
+            import boto3
+            boto3.client("s3", region_name="us-east-1").create_bucket(Bucket="demo-test-bucket")
+            from demolitions.storage import R2Storage
+            store = R2Storage("demo-test-bucket", "acc", "k", "s", pdf_cap=10 ** 9,
+                              endpoint_url="https://s3.amazonaws.com")
+
+            self._make_staging(store, "old", 3, created="2024-01-01",
+                               created_at="2024-01-01T10:00:00+00:00")
+            store.save_run("old")
+            self._make_staging(store, "new", 3, created="2024-01-02",
+                               created_at="2024-01-02T10:00:00+00:00")
+            store.save_run("new")
+            store.delete_pdfs("old")     # παλαιότερο: out-of-band διαγραφή
+
+            store.enforce_pdf_cap()
+
+            kept = {m["run_id"]: m.get("has_pdfs") for m in store.list_runs()}
+            self.assertEqual(kept["new"], True)       # ανέπαφο νεότερο
+            self.assertEqual(kept["old"], False)      # διορθώθηκε
+            self.assertEqual(len(list(store.iter_pdfs("new"))), 3)
+            self.assertEqual(len(list(store.iter_pdfs("old"))), 0)
+
+    def test_enforce_cap_reconcile_is_idempotent(self):
+        """Δεύτερο πέρασμα enforce_pdf_cap σε ήδη διορθωμένο stale run δεν
+        ρίχνει σφάλμα και αφήνει has_pdfs=False."""
+        from moto import mock_aws
+        with mock_aws():
+            import boto3
+            boto3.client("s3", region_name="us-east-1").create_bucket(Bucket="demo-test-bucket")
+            from demolitions.storage import R2Storage
+            store = R2Storage("demo-test-bucket", "acc", "k", "s", pdf_cap=10 ** 9,
+                              endpoint_url="https://s3.amazonaws.com")
+
+            self._make_staging(store, "stale", 2,
+                               created_at="2024-01-01T10:00:00+00:00")
+            store.save_run("stale")
+            store.delete_pdfs("stale")
+
+            store.enforce_pdf_cap()
+            self.assertFalse(store.read_manifest("stale")["has_pdfs"])
+            store.enforce_pdf_cap()                   # ξανά -> no-op, χωρίς σφάλμα
+            self.assertFalse(store.read_manifest("stale")["has_pdfs"])
 
 
 class TestLocalStorage(unittest.TestCase):
