@@ -100,6 +100,12 @@ class LocalStorage:
     def cleanup(self, run_id):
         pass
 
+    def pull_cache(self, name, cache_dir):
+        return False   # τοπικά το cache_dir είναι ήδη μόνιμο
+
+    def push_cache(self, name, cache_dir):
+        return False
+
     def _dir(self, run_id):
         d = (self.runs / run_id).resolve()
         if not d.is_relative_to(self.runs.resolve()):
@@ -282,6 +288,31 @@ class R2Storage:
                 self.delete_run(run_id)
         except Exception:
             pass
+
+    def pull_cache(self, name, cache_dir):
+        """Κατεβάζει κοινό μόνιμο cache αρχείο (π.χ. geocode.json) από το R2
+        στον εφήμερο δίσκο πριν τη γεωκωδικοποίηση, ώστε η cache να επιβιώνει
+        spin-down (το /tmp σβήνεται σε κάθε ύπνο). Κλειδί `cache/<name>`: έξω
+        από το `runs/`, οπότε δεν μετριέται στη χρήση, δεν εκκαθαρίζεται από το
+        cap, ούτε θεωρείται orphan. Επιστρέφει True αν υπήρχε στο R2."""
+        dest = Path(cache_dir) / name
+        try:
+            obj = self.s3.get_object(Bucket=self.bucket, Key=f"cache/{name}")
+        except Exception:
+            return False
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(obj["Body"].read())
+        return True
+
+    def push_cache(self, name, cache_dir):
+        """Ανεβάζει το cache αρχείο στο R2 μετά τη γεωκωδικοποίηση, ώστε οι νέες
+        εγγραφές να επιβιώσουν τον επόμενο spin-down. True αν υπήρχε τοπικά."""
+        src = Path(cache_dir) / name
+        if not src.is_file():
+            return False
+        self.s3.upload_file(str(src), self.bucket, f"cache/{name}",
+                            ExtraArgs={"ContentType": content_type(name)})
+        return True
 
     def exists(self, run_id):
         try:

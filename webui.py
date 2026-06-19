@@ -207,6 +207,10 @@ def _geocode_worker(j, run_id, staging=None):
     try:
         if staging is None:                       # κρύα εκκίνηση (παλιό run)
             staging = store.prepare_staging(run_id)
+        # ζεστή geocode cache από το R2 (επιβιώνει spin-down)· οι ~2% εγγραφές
+        # χωρίς συντεταγμένες PDF δεν ξαναχτυπούν το Nominatim κάθε run
+        if store.pull_cache("geocode.json", CACHE_DIR):
+            j.append("Φορτώθηκε η αποθηκευμένη geocode cache.")
         enrich_geocode(staging, cache_dir=CACHE_DIR, log=j.append,
                        step=j.step, cancel=j.cancel_event.is_set)
         store.save_meta(run_id)   # μόνο json/xlsx — τα PDF ανέβηκαν ήδη
@@ -226,6 +230,9 @@ def _geocode_worker(j, run_id, staging=None):
         j.error = f"Σφάλμα γεωκωδικοποίησης: {e}"
         j.state = "error"
     finally:
+        # σώσε ό,τι έμαθε το Nominatim (και σε ακύρωση/σφάλμα — οι μερικές
+        # εγγραφές είναι έγκυρες) πριν σβηστεί ο εφήμερος δίσκος
+        store.push_cache("geocode.json", CACHE_DIR)
         store.cleanup(run_id)
 
 

@@ -859,6 +859,43 @@ class TestR2Storage(unittest.TestCase):
             out = b"".join(store._resilient_body(key, FlakyBody(first), len(data)))
             self.assertEqual(out, data)         # πλήρες, παρά την πτώση
 
+    def test_cache_roundtrip_survives_ephemeral_disk(self):
+        """push_cache/pull_cache διατηρούν το geocode.json στο R2 ώστε να
+        επιβιώνει spin-down (το /tmp σβήνεται)· το κλειδί είναι έξω από runs/."""
+        from moto import mock_aws
+        with mock_aws():
+            import boto3
+            boto3.client("s3", region_name="us-east-1").create_bucket(Bucket="demo-test-bucket")
+            from demolitions.storage import R2Storage
+            store = R2Storage("demo-test-bucket", "acc", "k", "s",
+                              endpoint_url="https://s3.amazonaws.com")
+            with tempfile.TemporaryDirectory() as c1, tempfile.TemporaryDirectory() as c2:
+                # κανένα cache ακόμη -> pull επιστρέφει False
+                self.assertFalse(store.pull_cache("geocode.json", c1))
+                payload = '{"Δράμα, Ελλάδα": {"status": "hit", "result": [41.1, 24.1]}}'
+                (Path(c1) / "geocode.json").write_text(payload, "utf-8")
+
+                self.assertTrue(store.push_cache("geocode.json", c1))
+                # νέος (εφήμερος) δίσκος c2: pull το ξαναφέρνει ατόφιο
+                self.assertTrue(store.pull_cache("geocode.json", c2))
+                self.assertEqual((Path(c2) / "geocode.json").read_text("utf-8"), payload)
+
+            # το cache δεν θεωρείται run (έξω από runs/) -> ούτε orphan ούτε χρήση
+            self.assertEqual(store.delete_orphans(), 0)
+            self.assertEqual(store.list_runs(), [])
+            self.assertEqual(store.usage()["storage_bytes"], 0)
+
+    def test_push_cache_noop_when_file_absent(self):
+        from moto import mock_aws
+        with mock_aws():
+            import boto3
+            boto3.client("s3", region_name="us-east-1").create_bucket(Bucket="demo-test-bucket")
+            from demolitions.storage import R2Storage
+            store = R2Storage("demo-test-bucket", "acc", "k", "s",
+                              endpoint_url="https://s3.amazonaws.com")
+            with tempfile.TemporaryDirectory() as c:
+                self.assertFalse(store.push_cache("geocode.json", c))
+
     def test_eviction_uses_creation_time_not_manifest_mtime(self):
         from moto import mock_aws
         with mock_aws():
@@ -937,6 +974,14 @@ class TestLocalStorage(unittest.TestCase):
             self.assertTrue((Path(tmp) / "good").exists())
             self.assertFalse((Path(tmp) / "bad").exists())
             self.assertTrue((Path(tmp) / "active").exists())
+
+    def test_cache_is_noop_local(self):
+        # τοπικά το cache_dir είναι ήδη μόνιμο -> pull/push δεν κάνουν τίποτα
+        from demolitions.storage import LocalStorage
+        with tempfile.TemporaryDirectory() as tmp:
+            st = LocalStorage(tmp)
+            self.assertFalse(st.pull_cache("geocode.json", tmp))
+            self.assertFalse(st.push_cache("geocode.json", tmp))
 
 
 class TestWebUI(unittest.TestCase):
