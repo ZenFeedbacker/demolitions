@@ -586,8 +586,9 @@ function buildTable(rows, runId) {
   if (new Set(rows.map(r => r.ektasi || "ολική")).size < 2)
     fx.classList.add("hidden");
   if (!rows.some(r => r.nonbuilding)) fk.classList.add("hidden");
-  // φίλτρο ύποπτης θέσης μόνο αν υπάρχουν σημειωμένες εγγραφές «μακριά από δήμο»
-  if (!rows.some(r => (r.flags || "").includes("από τον δήμο")))
+  // φίλτρο ύποπτης θέσης μόνο αν υπάρχουν σημειωμένες εγγραφές
+  if (!rows.some(r => (r.flags || "").includes("από τον δήμο") ||
+                      (r.flags || "").includes("εκτός περιοχής")))
     fl.classList.add("hidden");
 
   const tr = box.querySelector("thead tr");
@@ -610,7 +611,8 @@ function buildTable(rows, runId) {
       (!ktisma || (ktisma === "build" ? !r.nonbuilding : !!r.nonbuilding)) &&
       (!oro || String(r.orofoi) === oro) &&
       (!dup || !(r.flags || "").includes("πιθανό διπλό")) &&
-      (!loc || !(r.flags || "").includes("από τον δήμο")) &&
+      (!loc || !((r.flags || "").includes("από τον δήμο") ||
+                 (r.flags || "").includes("εκτός περιοχής"))) &&
       (!q || norm([r.odos, r.poli, r.perigrafi, r.dim_enotita, r.ada].join(" ")).includes(q)));
     const get = COLS[sortKey][4] || COLS[sortKey][1];
     view.sort((a, b) => {

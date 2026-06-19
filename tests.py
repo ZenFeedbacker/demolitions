@@ -592,6 +592,104 @@ class TestRunPipelinePdfCallback(unittest.TestCase):
             self.assertTrue(any("Εκτιμώμενο μέγεθος PDF" in m for m in logs))
 
 
+class TestAreaBboxFlag(unittest.TestCase):
+    """rows_centroid_bbox + area_flag — γεωγραφική συνέπεια εγγραφών."""
+
+    def _row(self, lat, lon, precision="κτίσμα (PDF)", flags=""):
+        return {"lat": lat, "lon": lon, "precision": precision, "flags": flags}
+
+    def test_bbox_from_clustered_rows(self):
+        from demolitions.geocode import rows_centroid_bbox
+        rows = [self._row(38.0 + i * 0.05, 23.7) for i in range(10)]
+        bbox = rows_centroid_bbox(rows)
+        self.assertIsNotNone(bbox)
+        lat_min, lat_max, lon_min, lon_max = bbox
+        for r in rows:
+            self.assertGreater(r["lat"], lat_min)
+            self.assertLess(r["lat"], lat_max)
+
+    def test_bbox_excludes_outlier(self):
+        """Ένα outlier σε Κρήτη δεν επεκτείνει το bbox της Αττικής."""
+        from demolitions.geocode import rows_centroid_bbox
+        rows = [self._row(38.0 + i * 0.02, 23.7) for i in range(20)]
+        rows.append(self._row(35.3, 25.1))   # outlier — Κρήτη
+        bbox = rows_centroid_bbox(rows)
+        self.assertIsNotNone(bbox)
+        lat_min, _, _, _ = bbox
+        # bbox δεν πρέπει να εκτείνεται μέχρι την Κρήτη (35.3° - margin 0.5° = 34.8°)
+        self.assertGreater(lat_min, 35.5, f"lat_min={lat_min:.2f} (Κρήτη διέρρευσε στο bbox)")
+
+    def test_area_flag_outside_bbox(self):
+        from demolitions.geocode import area_flag
+        bbox = (37.0, 39.0, 22.5, 25.0)   # Αττική + margin
+        row = self._row(35.3, 25.1)        # Κρήτη
+        flag = area_flag(row, bbox)
+        self.assertIsNotNone(flag)
+        self.assertIn("εκτός περιοχής αναζήτησης", flag)
+        self.assertIn("km", flag)
+
+    def test_area_flag_inside_bbox(self):
+        from demolitions.geocode import area_flag
+        bbox = (37.0, 39.0, 22.5, 25.0)
+        self.assertIsNone(area_flag(self._row(38.0, 23.7), bbox))
+
+    def test_area_flag_low_precision_ignored(self):
+        """Precision «δήμος» (centroid placeholder) δεν ελέγχεται."""
+        from demolitions.geocode import area_flag
+        bbox = (37.0, 39.0, 22.5, 25.0)
+        self.assertIsNone(area_flag(self._row(35.3, 25.1, precision="δήμος"), bbox))
+
+    def test_area_flag_no_lat(self):
+        from demolitions.geocode import area_flag
+        bbox = (37.0, 39.0, 22.5, 25.0)
+        self.assertIsNone(area_flag(
+            {"lat": None, "lon": None, "precision": "κτίσμα (PDF)", "flags": ""}, bbox))
+
+    def test_bbox_needs_5_points(self):
+        from demolitions.geocode import rows_centroid_bbox
+        rows = [self._row(38.0, 23.7) for _ in range(4)]
+        self.assertIsNone(rows_centroid_bbox(rows))
+
+    def test_enrich_geocode_flags_out_of_area(self):
+        """enrich_geocode σημαίνει εγγραφές εκτός γεωγραφικών ορίων."""
+        from unittest import mock
+        from demolitions import geocode, pipeline
+        base = {
+            "url": "https://diavgeia.gov.gr/decision/view/X",
+            "dimos": "Δήμος Αθηναίων", "dimos_query": "Δήμος Αθηναίων",
+            "precision": "κτίσμα (PDF)", "flags": "", "date": "2021-01-15",
+            "year": 2021, "muni_code": "4505", "eidos": "κατεδάφιση",
+            "dim_enotita": "", "poli": "", "odos": "", "ar_apo": "",
+            "ar_eos": "", "ot": "", "kaek": "", "perigrafi": "",
+            "orofoi": None, "ektasi": "ολική", "nonbuilding": False,
+            "parse_ok": True, "pdf_path": "", "dimos_pdf": "",
+        }
+        rows = [{**base, "ada": f"ΑΔΑ{i}", "lat": 38.0 + i * 0.02, "lon": 23.7}
+                for i in range(10)]
+        rows.append({**base, "ada": "ΚΡΗΤΗ", "lat": 35.3, "lon": 25.1})
+        manifest = {"run_id": "test_run", "area_query": "Περιφέρεια Αττικής",
+                    "area": "Αττική", "from": "2021-01-01", "to": "2021-12-31",
+                    "created": "2021-12-31", "n_rows": len(rows), "geocoded": False,
+                    "has_pdfs": False}
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "test_run"
+            run_dir.mkdir()
+            (run_dir / "rows.json").write_text(
+                json.dumps(rows, ensure_ascii=False), "utf-8")
+            (run_dir / "run.json").write_text(
+                json.dumps(manifest, ensure_ascii=False), "utf-8")
+            with mock.patch.object(geocode.Geocoder, "dimos_distance_km",
+                                   return_value=None):
+                pipeline.enrich_geocode(run_dir, cache_dir=tmp, log=lambda m: None)
+            result_rows = json.loads((run_dir / "rows.json").read_text("utf-8"))
+        crete = next(r for r in result_rows if r["ada"] == "ΚΡΗΤΗ")
+        self.assertIn("εκτός περιοχής αναζήτησης", crete["flags"])
+        attica = [r for r in result_rows if r["ada"] != "ΚΡΗΤΗ"]
+        for r in attica:
+            self.assertNotIn("εκτός περιοχής", r["flags"],
+                             f"false positive για {r['ada']}")
+
+
 class TestR2Storage(unittest.TestCase):
     """Έλεγχος του R2 backend με εικονικό S3 (moto), αν είναι διαθέσιμο."""
 

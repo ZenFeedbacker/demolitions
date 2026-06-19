@@ -24,6 +24,16 @@ LON_RANGE = (19.0, 30.1)
 session = requests.Session()
 session.headers["User-Agent"] = USER_AGENT
 
+# ακρίβεια geocoding αρκετή για γεωγραφικό έλεγχο θέσης
+_HIGH_PREC = frozenset(("κτίσμα (PDF)", "οδός+αριθμός", "οδός", "οικισμός"))
+
+
+def _haversine(la1, lo1, la2, lo2):
+    la1, lo1, la2, lo2 = map(math.radians, (la1, lo1, la2, lo2))
+    h = (math.sin((la2 - la1) / 2) ** 2
+         + math.cos(la1) * math.cos(la2) * math.sin((lo2 - lo1) / 2) ** 2)
+    return 6371 * 2 * math.asin(math.sqrt(h))
+
 
 def _strip_dimos(label):
     """«Δήμος Δράμας»/«ΔΗΜΟΣ ΔΡΑΜΑΣ» -> «Δράμας»."""
@@ -170,12 +180,58 @@ class Geocoder:
         hit = self._query(f"{query}, Ελλάδα")
         if not hit:
             return None
-        la1, lo1, la2, lo2 = map(math.radians,
-                                 (row["lat"], row["lon"], hit[0], hit[1]))
-        h = (math.sin((la2 - la1) / 2) ** 2
-             + math.cos(la1) * math.cos(la2) * math.sin((lo2 - lo1) / 2) ** 2)
-        return 6371 * 2 * math.asin(math.sqrt(h))
+        return _haversine(row["lat"], row["lon"], hit[0], hit[1])
 
     def close(self):
         if self._dirty:
             self._save()
+
+
+def rows_centroid_bbox(rows, margin=0.5):
+    """Ευρωστο bbox (lat_min, lat_max, lon_min, lon_max) από γεωκωδικοποιημένες
+    εγγραφές. Αποκλείει outliers με τον κανόνα 1.5×IQR Tukey: αν π.χ. υπάρχουν
+    μερικές άδειες Κρήτης μέσα σε αναζήτηση Αττικής, η IQR τις αποκλείει και
+    το bbox παραμένει αττικοκεντρικό. Απαιτεί ≥5 σημεία υψηλής ακρίβειας.
+
+    Το αποτέλεσμα χρησιμοποιείται σε δεύτερο πέρασμα του enrich_geocode για να
+    εντοπιστούν εγγραφές γεωγραφικά εκτός της ζητούμενης περιοχής — χωρίς
+    επιπλέον κλήσεις Nominatim και ανεξάρτητα από ομωνυμίες δήμων."""
+    pts = [(r["lat"], r["lon"]) for r in rows
+           if r.get("lat") and r.get("precision") in _HIGH_PREC]
+    if len(pts) < 5:
+        return None
+    lats = sorted(p[0] for p in pts)
+    lons = sorted(p[1] for p in pts)
+    n = len(lats)
+    lat_q1, lat_q3 = lats[n // 4], lats[3 * n // 4]
+    lon_q1, lon_q3 = lons[n // 4], lons[3 * n // 4]
+    lat_iqr = max(lat_q3 - lat_q1, 0.01)
+    lon_iqr = max(lon_q3 - lon_q1, 0.01)
+    core = [(la, lo) for la, lo in pts
+            if (lat_q1 - 1.5 * lat_iqr <= la <= lat_q3 + 1.5 * lat_iqr
+                and lon_q1 - 1.5 * lon_iqr <= lo <= lon_q3 + 1.5 * lon_iqr)]
+    if not core:
+        return None
+    lats = [p[0] for p in core]
+    lons = [p[1] for p in core]
+    return (min(lats) - margin, max(lats) + margin,
+            min(lons) - margin, max(lons) + margin)
+
+
+def area_flag(row, bbox):
+    """Flag «εκτός περιοχής αναζήτησης» αν η εγγραφή βρίσκεται εκτός bbox.
+
+    Επιστρέφει string ή None. Αγνοεί εγγραφές χωρίς αξιόπιστες συντεταγμένες
+    (precision «δήμος» ή καθόλου geocoding) — μόνο «κτίσμα», «οδός» κ.λπ."""
+    if bbox is None or not row.get("lat"):
+        return None
+    if row.get("precision") not in _HIGH_PREC:
+        return None
+    lat, lon = row["lat"], row["lon"]
+    lat_min, lat_max, lon_min, lon_max = bbox
+    if lat_min <= lat <= lat_max and lon_min <= lon <= lon_max:
+        return None
+    center_lat = (lat_min + lat_max) / 2
+    center_lon = (lon_min + lon_max) / 2
+    dist = _haversine(lat, lon, center_lat, center_lon)
+    return f"~{dist:.0f}km εκτός περιοχής αναζήτησης"

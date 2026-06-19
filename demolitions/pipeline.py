@@ -17,7 +17,7 @@ from pathlib import Path
 
 from .areas import municipality_labels, normalize, resolve_area
 from .diavgeia import KIND_KATEDAFISI, issue_date, permit_kind, search_permits
-from .geocode import Geocoder
+from .geocode import Geocoder, area_flag, rows_centroid_bbox
 from .greek import pretty_area
 from .output import write_xlsx
 from .pdfparse import parse_decision
@@ -157,6 +157,7 @@ def run_pipeline(area, from_date, to_date, out_dir, *, cache_dir,
         if i % 25 == 0 or i == len(decisions):
             ok = sum(1 for r in rows if r["parse_ok"])
             log(f"  {i}/{len(decisions)} (επιτυχής ανάλυση: {ok})")
+    del decisions   # ελευθερώνει μνήμη Διαύγειας πριν δημιουργηθεί το xlsx
     n_dups = sum(1 for r in rows if r["flags"])
     if n_dups:
         log(f"  Σημειώθηκαν {n_dups} πιθανά διπλά (ίδιος δήμος/διεύθυνση/περιγραφή).")
@@ -222,6 +223,21 @@ def enrich_geocode(run_dir, *, cache_dir, log=print, step=None, cancel=None):
                 hit = sum(1 for r in rows[:i] if r.get("lat"))
                 log(f"  {i}/{len(rows)} (με συντεταγμένες: {hit})")
         completed = True
+        # δεύτερο πέρασμα: ευρωστό bbox από τις ίδιες τις εγγραφές για να
+        # εντοπιστούν σημεία που βρίσκονται εκτός της ζητούμενης περιοχής
+        # (π.χ. άδειες Κρήτης σε αναζήτηση Αττικής λόγω ομώνυμου δήμου).
+        # Δεν απαιτεί επιπλέον κλήσεις Nominatim — IQR αποκλείει τα outliers.
+        bbox = rows_centroid_bbox(rows)
+        if bbox:
+            n_out = 0
+            for row in rows:
+                flag = area_flag(row, bbox)
+                if flag and flag not in (row["flags"] or ""):
+                    row["flags"] = (row["flags"] + "; " if row["flags"]
+                                    else "") + flag
+                    n_out += 1
+            if n_out:
+                log(f"  {n_out} εγγραφές εκτός γεωγραφικών ορίων αναζήτησης.")
     finally:
         geocoder.close()
         manifest["geocoded"] = completed
