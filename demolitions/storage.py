@@ -19,6 +19,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+from urllib.parse import quote
 
 CONTENT_TYPES = {
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -105,6 +106,9 @@ class LocalStorage:
 
     def push_cache(self, name, cache_dir):
         return False
+
+    def presigned_url(self, run_id, relpath, **_):
+        return None   # τοπικά δεν υπάρχει presigning — ο caller σερβίρει το αρχείο
 
     def _dir(self, run_id):
         d = (self.runs / run_id).resolve()
@@ -341,6 +345,18 @@ class R2Storage:
             return None
         size = obj["ContentLength"]
         return self._resilient_body(key, obj["Body"], size), size
+
+    def presigned_url(self, run_id, relpath, *, expires=21600, download_name=None):
+        """Προσωρινό (default 6h) URL για απευθείας download του αντικειμένου
+        από το R2, ώστε τα μεγάλα downloads να παρακάμπτουν τον (με όριο κίνησης)
+        host. `download_name`: επιβάλλει filename στο browser μέσω
+        Content-Disposition (RFC-5987 για ελληνικά ονόματα)."""
+        params = {"Bucket": self.bucket, "Key": self._key(run_id, relpath)}
+        if download_name:
+            params["ResponseContentDisposition"] = (
+                "attachment; filename*=UTF-8''" + quote(download_name, safe=""))
+        return self.s3.generate_presigned_url(
+            "get_object", Params=params, ExpiresIn=expires)
 
     def _resilient_body(self, key, body, size, chunk=65536):
         """Streamάρει ένα αντικείμενο· αν η σύνδεση με το R2 κοπεί στη μέση

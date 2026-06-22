@@ -1210,6 +1210,39 @@ class TestR2Storage(unittest.TestCase):
             store.enforce_pdf_cap()                   # ξανά -> no-op, χωρίς σφάλμα
             self.assertFalse(store.read_manifest("stale")["has_pdfs"])
 
+    def test_presigned_url_shape(self):
+        """presigned_url -> str που περιέχει το object key και υπογραφή· με
+        download_name επιβάλλεται Content-Disposition (URL-encoded). Τα URL
+        του moto είναι έγκυρα strings — δεν τα κατεβάζουμε, ελέγχουμε μόνο
+        τη μορφή τους (offline)."""
+        from urllib.parse import quote
+        from moto import mock_aws
+        with mock_aws():
+            import boto3
+            boto3.client("s3", region_name="us-east-1").create_bucket(Bucket="demo-test-bucket")
+            from demolitions.storage import R2Storage
+            store = R2Storage("demo-test-bucket", "acc", "k", "s",
+                              endpoint_url="https://s3.amazonaws.com")
+
+            url = store.presigned_url("rid1", "rid1.xlsx")
+            self.assertIsInstance(url, str)
+            self.assertIn("runs/rid1/rid1.xlsx", url)
+            self.assertIn("X-Amz-Signature", url)
+            # χωρίς download_name -> χωρίς Content-Disposition
+            self.assertNotIn("response-content-disposition", url.lower())
+
+            named = store.presigned_url("rid1", "rid1.xlsx", download_name="rid1.xlsx")
+            self.assertIsInstance(named, str)
+            self.assertIn("X-Amz-Signature", named)
+            self.assertIn("response-content-disposition", named.lower())
+
+            # ελληνικό όνομα -> RFC-5987· το όνομα μπαίνει quoted στο
+            # Content-Disposition και μετά το URL του query string ξανα-
+            # κωδικοποιείται από τον presigner (διπλό encoding)
+            greek = store.presigned_url("rid1", "a.pdf",
+                                        download_name="Δήμος Χ.zip")
+            self.assertIn(quote(quote("Δήμος Χ.zip")), greek)
+
 
 class TestLocalStorage(unittest.TestCase):
     def test_lifecycle(self):
@@ -1269,6 +1302,110 @@ class TestLocalStorage(unittest.TestCase):
             st = LocalStorage(tmp)
             self.assertFalse(st.pull_cache("geocode.json", tmp))
             self.assertFalse(st.push_cache("geocode.json", tmp))
+
+    def test_presigned_url_is_none_local(self):
+        # τοπικά δεν υπάρχει presigning — ο caller σερβίρει το αρχείο
+        from demolitions.storage import LocalStorage
+        with tempfile.TemporaryDirectory() as tmp:
+            st = LocalStorage(tmp)
+            self.assertIsNone(st.presigned_url("r1", "r1.xlsx"))
+            self.assertIsNone(st.presigned_url("r1", "r1.xlsx",
+                                               download_name="r1.xlsx"))
+
+
+class TestZipManifestR2(unittest.TestCase):
+    """api_zip_manifest με R2 backend (moto): client mode όταν υπάρχουν PDF,
+    αλλιώς server mode. Το webui.store παρακάμπτεται προσωρινά στον R2 store."""
+
+    RID = "r2-run_2024-01-01_2024-12-31_xyz"
+
+    def setUp(self):
+        import importlib.util
+        if importlib.util.find_spec("moto") is None:
+            self.skipTest("moto δεν είναι εγκατεστημένο")
+        # ο rate limiter μοιράζεται το "zip" bucket με τα υπόλοιπα zip tests·
+        # καθάρισε ώστε αυτό το test να μην μπλοκαριστεί από προηγούμενα hits
+        import webui
+        with webui.rate_lock:
+            webui.rate_hits.clear()
+
+    def _make_staging(self, store, run_id, n_pdfs, has_pdfs=True):
+        d = store.staging_dir(run_id)
+        rows = []
+        for i in range(n_pdfs):
+            rel = f"pdf/Δήμος Χ/2021/ΑΔΑ{i}.pdf"
+            p = d / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(b"%PDF-1.4 test")
+            rows.append({"ada": f"ΑΔΑ{i}", "pdf_path": rel})
+        (d / "rows.json").write_text(json.dumps(rows, ensure_ascii=False), "utf-8")
+        (d / (run_id + ".xlsx")).write_bytes(b"xlsx-bytes")
+        (d / "run.json").write_text(json.dumps(
+            {"run_id": run_id, "n_rows": n_pdfs, "has_pdfs": has_pdfs,
+             "created": "2024-01-01"}), "utf-8")
+
+    def _r2_store(self):
+        from demolitions.storage import R2Storage
+        return R2Storage("demo-test-bucket", "acc", "k", "s",
+                         endpoint_url="https://s3.amazonaws.com")
+
+    def test_client_mode_when_has_pdfs(self):
+        import webui
+        from moto import mock_aws
+        with mock_aws():
+            import boto3
+            boto3.client("s3", region_name="us-east-1").create_bucket(
+                Bucket="demo-test-bucket")
+            store = self._r2_store()
+            self._make_staging(store, self.RID, n_pdfs=3)
+            store.save_run(self.RID)
+
+            orig = webui.store
+            webui.store = store
+            try:
+                from urllib.parse import quote
+                m = webui.app.test_client().get(
+                    "/api/runs/" + quote(self.RID) + "/zip-manifest",
+                    environ_base={"REMOTE_ADDR": "198.51.100.7"}).get_json()
+            finally:
+                webui.store = orig
+
+        self.assertEqual(m["mode"], "client")
+        self.assertEqual(m["zipname"], self.RID + ".zip")
+        self.assertEqual(m["fallback"], "/zip/" + self.RID + ".zip")
+        # xlsx + ένα ανά PDF
+        self.assertEqual(len(m["files"]), 1 + 3)
+        first = m["files"][0]
+        self.assertEqual(first["name"], self.RID + ".xlsx")
+        self.assertIn("X-Amz-Signature", first["url"])     # presigned
+        for f in m["files"]:
+            self.assertTrue(f["name"])
+            self.assertTrue(f["url"])
+            self.assertIn("X-Amz-Signature", f["url"])
+
+    def test_server_mode_when_no_pdfs(self):
+        import webui
+        from moto import mock_aws
+        with mock_aws():
+            import boto3
+            boto3.client("s3", region_name="us-east-1").create_bucket(
+                Bucket="demo-test-bucket")
+            store = self._r2_store()
+            self._make_staging(store, self.RID, n_pdfs=0, has_pdfs=False)
+            store.save_run(self.RID)
+
+            orig = webui.store
+            webui.store = store
+            try:
+                from urllib.parse import quote
+                m = webui.app.test_client().get(
+                    "/api/runs/" + quote(self.RID) + "/zip-manifest",
+                    environ_base={"REMOTE_ADDR": "198.51.100.8"}).get_json()
+            finally:
+                webui.store = orig
+
+        self.assertEqual(m["mode"], "server")
+        self.assertEqual(m["url"], "/zip/" + self.RID + ".zip")
 
 
 class TestWebUI(unittest.TestCase):
@@ -1527,6 +1664,25 @@ class TestWebUI(unittest.TestCase):
         self.assertNotIn(("1.1.1.1", "run"), w.rate_hits)
         self.assertNotIn(("2.2.2.2", "zip"), w.rate_hits)
         self.assertIn(("9.9.9.9", "run"), w.rate_hits)
+
+    def test_zip_manifest_server_mode_local(self):
+        # τοπικός store -> πάντα server-side zip (δεν υπάρχει presigning)
+        m = self.client.get(self._url("/api/runs/<rid>/zip-manifest")).get_json()
+        self.assertEqual(m["mode"], "server")
+        self.assertEqual(m["url"], "/zip/{}.zip".format(self.RID))
+
+    def test_zip_manifest_unknown_run_404(self):
+        r = self.client.get("/api/runs/does-not-exist/zip-manifest")
+        self.assertEqual(r.status_code, 404)
+
+    def test_index_frontend_wiring(self):
+        # η σελίδα φέρνει όλα τα σημεία σύνδεσης του client-side zip download
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn("data-r2", html)                       # <body data-r2=…>
+        self.assertIn('document.body.dataset.r2 === "true"', html)
+        self.assertIn("/static/client-zip.js", html)
+        self.assertIn("data-zip-run", html)                  # κουμπί client-zip
+        self.assertIn('type="module"', html)                 # ESM import
 
 
 if __name__ == "__main__":

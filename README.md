@@ -85,6 +85,31 @@ run· πάνω από το `DEMOLITIONS_PDF_CACHE_LIMIT` (default 1 GB) σβήν
 Η δωρεάν βαθμίδα του Render «κοιμάται» μετά από 15′ αδράνειας (~1′ στην πρώτη
 επόμενη επίσκεψη).
 
+### CORS στο R2 (για το «Λήψη όλων (zip)» στον browser)
+
+Σε browser Chromium το κουμπί **«Λήψη όλων (zip)»** κατεβάζει τα PDF
+**απευθείας από το R2** (presigned URLs) και τα ζιπάρει στον client,
+παρακάμπτοντας το μετρημένο bandwidth του host. Για να πετύχει αυτό το
+cross-origin `fetch()`, το R2 bucket πρέπει να επιτρέπει GET από το origin
+του app. Χωρίς τον κανόνα, ο browser πέφτει πίσω στο πιο αργό server-side zip
+(που χρεώνεται στο bandwidth του host).
+
+Προσθέστε άπαξ τον εξής κανόνα CORS (Cloudflare dashboard: R2 → bucket →
+Settings → CORS policy, ή `aws s3api put-bucket-cors`):
+
+```json
+[{"AllowedOrigins": ["https://demolitions.onrender.com"],
+  "AllowedMethods": ["GET"], "AllowedHeaders": ["*"], "MaxAgeSeconds": 3600}]
+```
+
+Αντικαταστήστε το origin αν το deployed domain διαφέρει. Τα presigned URLs
+χρησιμοποιούν τα υπάρχοντα διαπιστευτήρια R2 — δεν χρειάζεται έκθεση δημόσιου
+(public) bucket.
+
+Αφορά **μόνο** την R2-backed ανάπτυξη· η τοπική/CLI χρήση (`LocalStorage`) δεν
+κάνει ποτέ presign και πάντα χρησιμοποιεί το server zip, οπότε τοπικά δεν
+χρειάζεται CORS.
+
 ### Μεταβλητές περιβάλλοντος
 
 | env | default | σημασία |

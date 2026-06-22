@@ -129,6 +129,7 @@ def limit_expensive_routes():
         "api_run": "run",
         "api_geocode": "geocode",
         "serve_zip": "zip",
+        "api_zip_manifest": "zip",
     }.get(request.endpoint)
     if not action:
         return None
@@ -271,7 +272,8 @@ def favicon():
 @app.get("/")
 def index():
     return render_template("index.html", today=date.today().isoformat(),
-                           start=E_ADEIES_START.isoformat())
+                           start=E_ADEIES_START.isoformat(),
+                           r2=(store.kind == "r2"))
 
 
 @app.get("/api/about")
@@ -513,6 +515,31 @@ def serve_zip(run_id):
             zs.add(data=_diavgeia_pdf(r["ada"]), arcname=arc)
     return Response(zs, mimetype="application/zip",
                     headers={"Content-Disposition": _attachment(f"{run_id}.zip")})
+
+
+@app.get("/api/runs/<run_id>/zip-manifest")
+def api_zip_manifest(run_id):
+    """Δίνει στον browser presigned URL για κάθε αρχείο, ώστε να κατεβάσει
+    και να φτιάξει το zip τοπικά — παρακάμπτοντας τον μετρημένο host (R2 μόνο).
+    Στον τοπικό δίσκο (ή σε run χωρίς PDF στο R2) επιστρέφει το server-side zip."""
+    if not store.exists(run_id):
+        abort(404)
+    server_url = f"/zip/{run_id}.zip"
+    manifest = store.read_manifest(run_id)
+    if store.kind == "r2" and manifest.get("has_pdfs"):
+        rows = json.loads(b"".join(m[0])) if (m := store.open_member(run_id, "rows.json")) else []
+        xlsx = f"{run_id}.xlsx"
+        files = [{"name": xlsx,
+                  "url": store.presigned_url(run_id, xlsx, download_name=xlsx)}]
+        for r in rows:
+            arc = r.get("pdf_path")
+            # traversal guard — το _key δεν ελέγχει το relpath
+            if arc and arc.startswith("pdf/"):
+                files.append({"name": arc,
+                              "url": store.presigned_url(run_id, arc)})
+        return jsonify({"mode": "client", "zipname": f"{run_id}.zip",
+                        "files": files, "fallback": server_url})
+    return jsonify({"mode": "server", "url": server_url})
 
 
 def main():

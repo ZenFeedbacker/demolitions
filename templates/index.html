@@ -58,10 +58,13 @@
   #results { margin-top: 1.6rem; }
   .dl { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center;
           margin: .6rem 0 1rem; }
-  .dl a.btn { background: #2e6b46; color: #fff; text-decoration: none;
+  .dl a.btn, .dl button.btn { background: #2e6b46; color: #fff; text-decoration: none;
           padding: .55rem 1.1rem; border-radius: 6px; }
-  .dl a.btn.alt { background: #5a5346; }
+  .dl a.btn.alt, .dl button.btn.alt { background: #5a5346; }
+  .dl button.btn { border: none; font-size: 1rem; cursor: pointer; }
   .dl button { background: #fff; }
+  .zipstat { color: #6b655a; font-size: .85rem; }
+  .zipstat a { color: #1d5fa8; }
   .filters { display: flex; flex-wrap: wrap; gap: .6rem; margin-bottom: .6rem; }
   .filters input, .filters select { padding: .4rem .5rem; border: 1px solid var(--line);
           border-radius: 6px; background: #fff; font-size: .9rem; }
@@ -123,7 +126,7 @@
 <script src="/static/leaflet.js"></script>
 <script src="/static/leaflet.markercluster.js"></script>
 </head>
-<body>
+<body data-r2="{{ r2|tojson }}">
 <div class="wrap">
   <h1>Κατεδαφίσεις</h1>
   <div class="sub">Άδειες κατεδάφισης από τη Διαύγεια (e-Άδειες/ΤΕΕ) — spreadsheet, PDF και συντεταγμένες</div>
@@ -177,6 +180,9 @@
 
 <script>
 "use strict";
+// r2 περνά ως HTML attribute στο <body> (όχι Jinja μέσα σε <script>, ώστε το
+// `node --check` του CI να μη σκοντάφτει σε Jinja)· τιμή "true"/"false" (tojson)
+window.DEMOLITIONS_R2 = document.body.dataset.r2 === "true";
 const $ = id => document.getElementById(id);
 const dmy = iso => (iso || "").split("-").reverse().join("/");
 const PHASES = { search: "Αναζήτηση στη Διαύγεια…", pdf: "Κατέβασμα και ανάλυση PDF",
@@ -375,12 +381,19 @@ async function renderResults(container, manifest, geocodingNow) {
   const rid = encodeURIComponent(manifest.run_id);
   const dupNote = manifest.n_dups
     ? ` — ${manifest.n_dups} πιθανά διπλά (στήλη «Έλεγχος»)` : "";
+  // σε Chromium browsers με R2: κατεβάζουμε τα PDF απευθείας από το R2 και
+  // φτιάχνουμε το zip στον client (streaming στον δίσκο), παρακάμπτοντας τον host
+  const clientZip = window.DEMOLITIONS_R2 && manifest.has_pdfs;
+  const zipBtn = clientZip
+    ? `<button class="btn alt" data-zip-run="${rid}" data-zipname="${esc(rid)}.zip">Λήψη όλων (zip)</button>`
+    : `<a class="btn alt" href="/zip/${rid}.zip">Λήψη όλων (zip)</a>`;
   h.innerHTML = `<h2 style="margin:.2rem 0"></h2>
     <div class="note">${dmy(manifest.from)} έως ${dmy(manifest.to)} ·
       <b>${manifest.n_rows}</b> άδειες${dupNote}</div>
     <div class="dl">
       <a class="btn" href="/runs/${rid}/${rid}.xlsx">Λήψη Excel</a>
-      <a class="btn alt" href="/zip/${rid}.zip">Λήψη όλων (zip)</a>
+      ${zipBtn}
+      <span class="zipstat" id="zipstat-${rid}"></span>
     </div>`;
   h.querySelector("h2").textContent = manifest.area;
   if (!manifest.geocoded && !geocodingNow) {
@@ -792,6 +805,106 @@ async function loadAbout() {
   const s = await (await fetch("/api/status?since=0")).json();
   if (s.state === "running" || s.state === "geocoding") startPolling();
 })();
+</script>
+
+<script type="module">
+"use strict";
+// Client-side zip: σε Chromium browsers κατεβάζουμε κάθε PDF απευθείας από το R2
+// (presigned URLs) και γράφουμε ΕΝΑ .zip κατευθείαν στον δίσκο (streaming),
+// χωρίς να περνά από τον (metered) host. Το module scope ΔΕΝ βλέπει τα classic
+// helpers ($, esc…) — γι' αυτό ορίζουμε τοπικά ό,τι χρειαζόμαστε.
+import { downloadZip } from "/static/client-zip.js";
+
+const byId = id => document.getElementById(id);
+function setStatus(runId, txt) {
+  const el = byId("zipstat-" + encodeURIComponent(runId));
+  if (el) el.textContent = txt;
+}
+function showServerFallback(runId) {
+  // δεν κάνουμε programmatic navigation (χωρίς user activation) — δίνουμε σύνδεσμο
+  const el = byId("zipstat-" + encodeURIComponent(runId));
+  if (el) {
+    el.textContent = "";
+    const a = document.createElement("a");
+    a.href = "/zip/" + encodeURIComponent(runId) + ".zip";
+    a.textContent = "Λήψη zip από τον server";
+    el.appendChild(a);
+  }
+}
+
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-zip-run]");
+  if (b) { e.preventDefault(); startZip(b.dataset.zipRun, b.dataset.zipname); }
+});
+
+async function startZip(runId, zipname) {
+  // ΣΕΙΡΑ ΚΡΙΣΙΜΗ: το showSaveFilePicker() θέλει transient user activation, την
+  // οποία ΟΠΟΙΟΔΗΠΟΤΕ await πριν από αυτό την «καίει» → SecurityError. Οπότε ο
+  // picker πρέπει να φτάνει ΧΩΡΙΣ προηγούμενο await.
+  if (!window.showSaveFilePicker) {           // μη-Chromium → server zip
+    location.href = "/zip/" + runId + ".zip";
+    return;
+  }
+  let handle;
+  try {
+    handle = await window.showSaveFilePicker({   // ← το ΠΡΩΤΟ await
+      suggestedName: zipname,
+      types: [{ description: "ZIP", accept: { "application/zip": [".zip"] } }],
+    });
+  } catch (err) {
+    if (err && err.name === "AbortError") return;   // ο χρήστης ακύρωσε
+    showServerFallback(runId);                       // ο picker δεν είναι διαθέσιμος
+    return;
+  }
+  // μόνο ΤΩΡΑ κάνουμε δικτυακή δουλειά:
+  try {
+    const m = await (await fetch(
+      "/api/runs/" + encodeURIComponent(runId) + "/zip-manifest")).json();
+    if (m.mode !== "client") {
+      // σπάνιο race: τα PDF έγιναν evict ανάμεσα σε render & click → ο server
+      // φτιάχνει το zip (re-fetch από Διαύγεια). Το γράφουμε στο ΙΔΙΟ handle που
+      // διάλεξε ο χρήστης, αντί να αφήσουμε άδειο αρχείο + δεύτερο download.
+      const sr = await fetch(m.url || ("/zip/" + encodeURIComponent(runId) + ".zip"));
+      if (sr.ok && sr.body) {
+        await sr.body.pipeTo(await handle.createWritable());
+        setStatus(runId, "✓");
+      } else {
+        showServerFallback(runId);
+      }
+      return;
+    }
+    const writable = await handle.createWritable();
+    setStatus(runId, "0/" + m.files.length);
+    let skipped = 0;
+    async function* gen() {
+      let i = 0;
+      for (const f of m.files) {
+        const r = await fetch(f.url);
+        if (r.ok) yield { name: f.name, input: r };
+        else skipped++;                               // λείπει από το R2 (eviction)
+        i++;
+        setStatus(runId, i + "/" + m.files.length);
+      }
+    }
+    await downloadZip(gen()).body.pipeTo(writable);   // streaming στον δίσκο
+    if (skipped) {
+      // ελλιπές zip — ο server φτιάχνει πλήρες (μέσω Διαύγειας) → δίνουμε σύνδεσμο
+      const el = byId("zipstat-" + encodeURIComponent(runId));
+      if (el) {
+        el.textContent = "✓ (" + skipped + " αρχεία λείπουν) ";
+        const a = document.createElement("a");
+        a.href = "/zip/" + encodeURIComponent(runId) + ".zip";
+        a.textContent = "πλήρες zip από server";
+        el.appendChild(a);
+      }
+    } else {
+      setStatus(runId, "✓");
+    }
+  } catch (err) {
+    if (err && err.name === "AbortError") return;
+    showServerFallback(runId);
+  }
+}
 </script>
 </body>
 </html>
