@@ -385,7 +385,7 @@ async function renderResults(container, manifest, geocodingNow) {
   // φτιάχνουμε το zip στον client (streaming στον δίσκο), παρακάμπτοντας τον host
   const clientZip = window.DEMOLITIONS_R2 && manifest.has_pdfs;
   const zipBtn = clientZip
-    ? `<button class="btn alt" data-zip-run="${rid}" data-zipname="${esc(rid)}.zip">Λήψη όλων (zip)</button>`
+    ? `<button class="btn alt" data-zip-run="${esc(manifest.run_id)}" data-zipname="${esc(manifest.run_id)}.zip">Λήψη όλων (zip)</button>`
     : `<a class="btn alt" href="/zip/${rid}.zip">Λήψη όλων (zip)</a>`;
   h.innerHTML = `<h2 style="margin:.2rem 0"></h2>
     <div class="note">${dmy(manifest.from)} έως ${dmy(manifest.to)} ·
@@ -842,7 +842,7 @@ async function startZip(runId, zipname) {
   // οποία ΟΠΟΙΟΔΗΠΟΤΕ await πριν από αυτό την «καίει» → SecurityError. Οπότε ο
   // picker πρέπει να φτάνει ΧΩΡΙΣ προηγούμενο await.
   if (!window.showSaveFilePicker) {           // μη-Chromium → server zip
-    location.href = "/zip/" + runId + ".zip";
+    location.href = "/zip/" + encodeURIComponent(runId) + ".zip";
     return;
   }
   let handle;
