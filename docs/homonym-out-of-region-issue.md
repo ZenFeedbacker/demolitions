@@ -1,6 +1,34 @@
 # Issue: Crete (Ηράκλειο) permits leak into a Περιφέρεια Αττικής search
 
-**Status:** open — needs a robust, *generalized* fix.
+**Status:** closed — implemented (commit `b390831`).
+
+## Resolution
+
+**Approach chosen:** bundled PE centroids + per-row haversine check, code-anchored.
+
+A JSON gazetteer of 75 Περιφερειακή Ενότητα centroids is bundled at
+`demolitions/data/pe_centroids.json`, keyed by the 2-digit PE prefix of
+`muni_code`. For every row whose `precision` is one of `{"κτίσμα (PDF)",
+"οδός+αριθμός", "οδός", "οικισμός"}`, `row_out_of_region(row)` (in
+`demolitions/geocode.py`) computes the haversine distance from the row's
+coordinates to the centroid of its **declared** PE and flags any row that is
+**> 250 km** away. Because the anchor is looked up by PE *code* (not the
+ambiguous municipality name), the check is immune to Nominatim homonym
+ambiguity and is independent of the contamination fraction — each row is
+judged individually.
+
+All acceptance criteria from §8 are met:
+- All 25 Crete permits in a Αττική result set are flagged regardless of
+  contamination fraction (including the 29–56% cases where the old IQR bbox
+  flagged 0/25).
+- The detector generalises to any region/homonym; no Crete-specific code.
+- No false positives on clean single-region, whole-country, or border searches.
+- Covered by offline unit tests; `python3 tests.py` green; `pyflakes` clean.
+
+**Remaining small gap:** rows with `precision="δήμος"` (~2%) are skipped —
+their coordinates are the municipality centroid rather than the actual building
+location, so a distance check would produce false positives.
+
 **Owner of fix:** specialized coding agent.
 
 ## 1. Summary

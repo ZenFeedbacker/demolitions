@@ -85,10 +85,10 @@ run· πάνω από το `DEMOLITIONS_PDF_CACHE_LIMIT` (default 1 GB) σβήν
 Η δωρεάν βαθμίδα του Render «κοιμάται» μετά από 15′ αδράνειας (~1′ στην πρώτη
 επόμενη επίσκεψη).
 
-### CORS στο R2 (για το «Λήψη όλων (zip)» στον browser)
+### CORS στο R2 (για το «Λήψη όλων (zip)» / «Λήψη φιλτραρισμένων» στον browser)
 
-Σε browser Chromium το κουμπί **«Λήψη όλων (zip)»** κατεβάζει τα PDF
-**απευθείας από το R2** (presigned URLs) και τα ζιπάρει στον client,
+Σε browser Chromium τα κουμπιά **«Λήψη όλων (zip)»** και **«Λήψη φιλτραρισμένων»**
+κατεβάζουν τα PDF **απευθείας από το R2** (presigned URLs) και τα ζιπάρουν στον client,
 παρακάμπτοντας το μετρημένο bandwidth του host. Για να πετύχει αυτό το
 cross-origin `fetch()`, το R2 bucket πρέπει να επιτρέπει GET από το origin
 του app. Χωρίς τον κανόνα, ο browser πέφτει πίσω στο πιο αργό server-side zip

@@ -9,6 +9,7 @@ Hosted:  gunicorn -w 1 --threads 8 --timeout 0 -b 0.0.0.0:$PORT webui:app
 ή Cloudflare R2 — βλ. demolitions/storage.py).
 """
 
+import io
 import json
 import os
 import socket
@@ -29,6 +30,7 @@ from zipstream import ZipStream
 from demolitions.areas import AreaError, list_areas, normalize, resolve_area
 from demolitions.diavgeia import session as diavgeia_session
 from demolitions.greek import pretty_area
+from demolitions.output import write_xlsx
 from demolitions.pipeline import (CancelledRun, E_ADEIES_START, NoPermitsFound,
                                   enrich_geocode, run_pipeline)
 from demolitions.storage import content_type, make_storage
@@ -130,6 +132,7 @@ def limit_expensive_routes():
         "api_geocode": "geocode",
         "serve_zip": "zip",
         "api_zip_manifest": "zip",
+        "api_xlsx_filtered": "zip",
     }.get(request.endpoint)
     if not action:
         return None
@@ -463,6 +466,25 @@ def _attachment(name):
     return "attachment; filename*=UTF-8''" + quote(name)
 
 
+def _load_rows(run_id):
+    """Φορτώνει το rows.json ενός run (λίστα dict) ή [] αν λείπει."""
+    member = store.open_member(run_id, "rows.json")
+    return json.loads(b"".join(member[0])) if member else []
+
+
+def _filtered_xlsx_bytes(run_id, ada_set):
+    """Φτιάχνει xlsx (bytes) ΜΟΝΟ για τις γραμμές του run των οποίων το ΑΔΑ
+    ανήκει στο `ada_set`, διατηρώντας την αρχική σειρά του rows.json. Τα pivot
+    φύλλα ξαναϋπολογίζονται για το υποσύνολο. Άγνωστα ΑΔΑ αγνοούνται. Επιστρέφει
+    None αν δεν μένει καμία γραμμή."""
+    subset = [r for r in _load_rows(run_id) if r.get("ada") in ada_set]
+    if not subset:
+        return None
+    buf = io.BytesIO()
+    write_xlsx(subset, buf)             # δέχεται file-like — όχι disk
+    return buf.getvalue()
+
+
 def _diavgeia_pdf(ada):
     """Streamάρει το PDF μιας πράξης από τη Διαύγεια (για zip χωρίς cache)."""
     url = f"https://diavgeia.gov.gr/doc/{ada}"
@@ -492,17 +514,50 @@ def _zip_member(run_id, arc, ada=None):
         yield from _diavgeia_pdf(ada)
 
 
-@app.get("/zip/<run_id>.zip")
+def _ada_filter():
+    """Προαιρετικό φίλτρο ΑΔΑ για το φιλτραρισμένο zip. Διαβάζεται ΜΟΝΟ από το
+    σώμα ενός POST — ένα `ada` form field ανά ΑΔΑ (`request.form.getlist`), ή
+    εναλλακτικά JSON `{"ada":[...]}`. Κάθε ΑΔΑ ταξιδεύει ως ξεχωριστή τιμή, οπότε
+    είναι ασφαλές ανεξαρτήτως περιεχομένου (π.χ. κόμμα) και χωρίς όριο μήκους URL
+    — σε αντίθεση με ένα `?ada=a,b,c` query string, που το comma-split θα έσπαγε
+    και που για ~1500 γραμμές ξεπερνά τα όρια header proxy/CDN (414/400).
+    Επιστρέφει None αν δεν υπάρχει φίλτρο (πλήρες zip — καμία αλλαγή στη
+    συμπεριφορά), αλλιώς set των ΑΔΑ (κενά αγνοούνται)."""
+    if request.method != "POST":
+        return None
+    ada = request.form.getlist("ada")
+    if not ada:
+        body = request.get_json(silent=True) or {}
+        raw = body.get("ada")
+        if isinstance(raw, list):
+            ada = [a for a in raw if isinstance(a, str)]
+    if not ada:
+        return None
+    return {a for a in ada if a}
+
+
+@app.route("/zip/<run_id>.zip", methods=["GET", "POST"])
 def serve_zip(run_id):
     if not store.exists(run_id):
         abort(404)
     manifest = store.read_manifest(run_id)
-    rows_member = store.open_member(run_id, "rows.json")
-    rows = json.loads(b"".join(rows_member[0])) if rows_member else []
+    rows = _load_rows(run_id)
+    ada_set = _ada_filter()
+    if ada_set is not None:                         # φιλτραρισμένο zip
+        rows = [r for r in rows if r.get("ada") in ada_set]
 
     zs = ZipStream()
     xlsx = f"{run_id}.xlsx"
-    zs.add(data=_zip_member(run_id, xlsx), arcname=xlsx)
+    if ada_set is not None:
+        # ξαναφτιάχνουμε το xlsx για το υποσύνολο (pivot ανά υποσύνολο)· είναι
+        # μικρό (~KB) οπότε το ετοιμάζουμε αμέσως αντί lazy. Η σειρά των γραμμών
+        # ακολουθεί το rows.json (όχι την τρέχουσα ταξινόμηση του πίνακα) — ίδια
+        # συμπεριφορά με το πλήρες xlsx, σκόπιμα συνεπής.
+        data = _filtered_xlsx_bytes(run_id, ada_set)
+        if data is not None:
+            zs.add(data=iter([data]), arcname=xlsx)
+    else:
+        zs.add(data=_zip_member(run_id, xlsx), arcname=xlsx)
     cached = manifest.get("has_pdfs")
     for r in rows:
         arc = r.get("pdf_path")
@@ -527,7 +582,7 @@ def api_zip_manifest(run_id):
     server_url = f"/zip/{run_id}.zip"
     manifest = store.read_manifest(run_id)
     if store.kind == "r2" and manifest.get("has_pdfs"):
-        rows = json.loads(b"".join(m[0])) if (m := store.open_member(run_id, "rows.json")) else []
+        rows = _load_rows(run_id)
         xlsx = f"{run_id}.xlsx"
         files = [{"name": xlsx,
                   "url": store.presigned_url(run_id, xlsx, download_name=xlsx)}]
@@ -540,6 +595,26 @@ def api_zip_manifest(run_id):
         return jsonify({"mode": "client", "zipname": f"{run_id}.zip",
                         "files": files, "fallback": server_url})
     return jsonify({"mode": "server", "url": server_url})
+
+
+@app.post("/api/runs/<run_id>/xlsx-filtered")
+def api_xlsx_filtered(run_id):
+    """Επιστρέφει xlsx (κατέβασμα) μόνο για τις γραμμές των οποίων το ΑΔΑ
+    στέλνεται στο σώμα `{"ada": [...]}` — για τη «Λήψη φιλτραρισμένων». POST
+    επειδή η λίστα ΑΔΑ μπορεί να είναι μεγάλη (~1500). Το xlsx είναι μικρό, οπότε
+    σερβίρεται μέσω του host (όχι presigned)."""
+    if not store.exists(run_id):
+        abort(404)
+    data = request.get_json(force=True, silent=True) or {}
+    ada = data.get("ada")
+    if not isinstance(ada, list) or not all(isinstance(a, str) for a in ada):
+        return jsonify({"error": "Το «ada» πρέπει να είναι λίστα από strings."}), 400
+    body = _filtered_xlsx_bytes(run_id, set(ada))
+    if body is None:                       # κανένα γνωστό ΑΔΑ -> τίποτα να σταλεί
+        return jsonify({"error": "Καμία γραμμή δεν ταιριάζει με τα ΑΔΑ."}), 400
+    name = f"{run_id}-φιλτραρισμένο.xlsx"
+    return Response(body, mimetype=content_type(name),
+                    headers={"Content-Disposition": _attachment(name)})
 
 
 def main():

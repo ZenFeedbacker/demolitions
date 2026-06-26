@@ -1408,6 +1408,149 @@ class TestZipManifestR2(unittest.TestCase):
         self.assertEqual(m["url"], "/zip/" + self.RID + ".zip")
 
 
+class TestFilteredDownload(unittest.TestCase):
+    """«Λήψη φιλτραρισμένων»: POST /api/runs/<id>/xlsx-filtered και το
+    φιλτραρισμένο serve_zip μέσω POST (η λίστα ΑΔΑ στο σώμα — `request.form`
+    getlist ή JSON). Με φίλτρο → μόνο τα ΑΔΑ του υποσυνόλου· χωρίς φίλτρο (απλό
+    GET) η συμπεριφορά είναι byte-for-byte ίδια με πριν."""
+
+    RID = "filt-run_2021-01-01_2022-12-31_xyz"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        os.environ["DEMOLITIONS_STORAGE"] = "local"
+        os.environ["DEMOLITIONS_RUNS_DIR"] = os.path.join(cls.tmp, "runs")
+        os.environ["DEMOLITIONS_CACHE_DIR"] = os.path.join(cls.tmp, "cache")
+        import importlib
+        cls.webui = importlib.reload(importlib.import_module("webui"))
+        cls.client = cls.webui.app.test_client()
+
+    @classmethod
+    def tearDownClass(cls):
+        import shutil
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+        for k in ("DEMOLITIONS_STORAGE", "DEMOLITIONS_RUNS_DIR",
+                  "DEMOLITIONS_CACHE_DIR"):
+            os.environ.pop(k, None)
+
+    def setUp(self):
+        self.webui.rate_hits.clear()
+        self.webui.RATE_LIMIT_WINDOW_SECONDS = 60
+        self.webui.RATE_LIMIT_MAX_REQUESTS = 100
+        base = {"dim_enotita": "", "poli": "", "odos": "", "ar_apo": "",
+                "ar_eos": "", "ot": "", "kaek": "", "perigrafi": "ΚΑΤΕΔΑΦΙΣΗ",
+                "orofoi": 1, "lat": None, "lon": None, "precision": "",
+                "parse_ok": True, "flags": "", "eidos": "κατεδάφιση"}
+        # 3 γραμμές, η μία (Γ) χωρίς PDF· διαφορετικά έτη/δήμοι ώστε το pivot
+        # να αλλάζει ορατά στο υποσύνολο
+        self.rows = [
+            {**base, "ada": "ΑΔΑ-Α", "url": "u/Α", "date": "2021-01-15",
+             "year": 2021, "dimos": "Δήμος Α",
+             "pdf_path": "pdf/Δήμος Α/2021/ΑΔΑ-Α.pdf"},
+            {**base, "ada": "ΑΔΑ:Β", "url": "u/Β", "date": "2021-06-20",
+             "year": 2021, "dimos": "Δήμος Β",
+             "pdf_path": "pdf/Δήμος Β/2021/ΑΔΑ-Β.pdf"},
+            {**base, "ada": "ΑΔΑ-Γ", "url": "u/Γ", "date": "2022-03-10",
+             "year": 2022, "dimos": "Δήμος Γ", "pdf_path": ""},
+        ]
+        d = self.webui.store.staging_dir(self.RID)
+        for r in self.rows:
+            if r["pdf_path"]:
+                p = d / r["pdf_path"]
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_bytes(b"%PDF-1.4 " + r["ada"].encode("utf-8"))
+        write_xlsx(self.rows, d / (self.RID + ".xlsx"))
+        (d / "rows.json").write_text(
+            json.dumps(self.rows, ensure_ascii=False), "utf-8")
+        (d / "run.json").write_text(json.dumps({
+            "run_id": self.RID, "area": "Α", "from": "2021-01-01",
+            "to": "2022-12-31", "created": "2021-01-15", "n_rows": 3,
+            "n_dups": 0, "geocoded": True, "has_pdfs": True},
+            ensure_ascii=False), "utf-8")
+
+    def tearDown(self):
+        self.webui.store.delete_run(self.RID)
+
+    def _q(self, path):
+        from urllib.parse import quote
+        return path.replace("<rid>", quote(self.RID))
+
+    # ---- POST /api/runs/<id>/xlsx-filtered ----------------------------------
+    def test_xlsx_filtered_subset(self):
+        from openpyxl import load_workbook
+        # υποσύνολο 2 από 3 ΑΔΑ (συμπεριλ. του «ΑΔΑ:Β» με χαρακτήρα προς encode)
+        r = self.client.post(self._q("/api/runs/<rid>/xlsx-filtered"),
+                             json={"ada": ["ΑΔΑ-Α", "ΑΔΑ:Β", "ΑΓΝΩΣΤΟ"]})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.headers["Content-Type"],
+                         "application/vnd.openxmlformats-officedocument."
+                         "spreadsheetml.sheet")
+        self.assertIn("attachment", r.headers.get("Content-Disposition", ""))
+        wb = load_workbook(io.BytesIO(r.data))
+        ws = wb["Κατεδαφίσεις"]
+        self.assertEqual(ws.max_row, 3)        # header + 2 γραμμές
+        # σειρά διατηρείται από το rows.json (Α πριν Β)
+        col = {key: i for i, (_, key, _) in enumerate(COLUMNS, 1)}
+        self.assertEqual(ws.cell(2, col["ada"]).value, "ΑΔΑ-Α")
+        self.assertEqual(ws.cell(3, col["ada"]).value, "ΑΔΑ:Β")
+        # το pivot ξαναϋπολογίστηκε για το υποσύνολο (μόνο 2 άδειες, 2021)
+        pivot = wb["Ανά έτος-δήμο"]
+        self.assertEqual(pivot.cell(pivot.max_row, pivot.max_column).value, 2)
+
+    def test_xlsx_filtered_unknown_run_404(self):
+        r = self.client.post("/api/runs/does-not-exist/xlsx-filtered",
+                             json={"ada": ["x"]})
+        self.assertEqual(r.status_code, 404)
+
+    def test_xlsx_filtered_bad_input_400(self):
+        r = self.client.post(self._q("/api/runs/<rid>/xlsx-filtered"),
+                             json={"ada": "not-a-list"})
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post(self._q("/api/runs/<rid>/xlsx-filtered"),
+                             json={"ada": [1, 2]})
+        self.assertEqual(r.status_code, 400)
+
+    def test_xlsx_filtered_no_match_400(self):
+        r = self.client.post(self._q("/api/runs/<rid>/xlsx-filtered"),
+                             json={"ada": ["ΑΓΝΩΣΤΟ"]})
+        self.assertEqual(r.status_code, 400)
+
+    # ---- serve_zip με φίλτρο ?ada=… -----------------------------------------
+    def test_zip_with_ada_filter(self):
+        from openpyxl import load_workbook
+        # κράτα μόνο Α (έχει PDF) και Γ (χωρίς PDF) — POST με επαναλαμβανόμενα πεδία
+        r = self.client.post(self._q("/zip/<rid>.zip"),
+                             data={"ada": ["ΑΔΑ-Α", "ΑΔΑ-Γ"]})
+        self.assertEqual(r.status_code, 200)
+        zf = zipfile.ZipFile(io.BytesIO(r.data))
+        names = zf.namelist()
+        pdfs = [n for n in names if n.endswith(".pdf")]
+        # μόνο το PDF του Α (το Γ δεν έχει pdf_path, το Β δεν είναι στο φίλτρο)
+        self.assertEqual(pdfs, ["pdf/Δήμος Α/2021/ΑΔΑ-Α.pdf"])
+        # το xlsx ξαναφτιάχτηκε για το υποσύνολο (Α + Γ = 2 γραμμές)
+        xlsx = [n for n in names if n.endswith(".xlsx")]
+        self.assertEqual(len(xlsx), 1)
+        wb = load_workbook(io.BytesIO(zf.read(xlsx[0])))
+        self.assertEqual(wb["Κατεδαφίσεις"].max_row, 3)   # header + Α + Γ
+
+    def test_zip_without_filter_unchanged(self):
+        # χωρίς ?ada= → πλήρες zip (xlsx + όλα τα PDF), αμετάβλητο
+        r = self.client.get(self._q("/zip/<rid>.zip"))
+        self.assertEqual(r.status_code, 200)
+        zf = zipfile.ZipFile(io.BytesIO(r.data))
+        names = zf.namelist()
+        pdfs = sorted(n for n in names if n.endswith(".pdf"))
+        self.assertEqual(pdfs, ["pdf/Δήμος Α/2021/ΑΔΑ-Α.pdf",
+                                "pdf/Δήμος Β/2021/ΑΔΑ-Β.pdf"])
+        xlsx = [n for n in names if n.endswith(".xlsx")]
+        self.assertEqual(xlsx, [self.RID + ".xlsx"])
+        # το πλήρες xlsx έχει 3 γραμμές
+        from openpyxl import load_workbook
+        wb = load_workbook(io.BytesIO(zf.read(xlsx[0])))
+        self.assertEqual(wb["Κατεδαφίσεις"].max_row, 4)   # header + 3
+
+
 class TestWebUI(unittest.TestCase):
     """Ολοκληρωμένος έλεγχος των endpoints με τοπικό store σε temp φάκελο."""
 
@@ -1682,6 +1825,9 @@ class TestWebUI(unittest.TestCase):
         self.assertIn('document.body.dataset.r2 === "true"', html)
         self.assertIn("/static/client-zip.js", html)
         self.assertIn("data-zip-run", html)                  # κουμπί client-zip
+        self.assertIn("data-zip-filtered", html)             # κουμπί φιλτραρισμένων
+        self.assertIn("/xlsx-filtered", html)                # POST endpoint
+        self.assertIn("__demolitionsFilter", html)           # γέφυρα classic→module
         self.assertIn('type="module"', html)                 # ESM import
 
 

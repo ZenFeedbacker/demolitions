@@ -391,13 +391,22 @@ async function renderResults(container, manifest, geocodingNow) {
   const zipBtn = clientZip
     ? `<button class="btn alt" data-zip-run="${esc(manifest.run_id)}" data-zipname="${esc(manifest.run_id)}.zip">Λήψη όλων (zip)</button>`
     : `<a class="btn alt" href="/zip/${rid}.zip">Λήψη όλων (zip)</a>`;
+  // «Λήψη φιλτραρισμένων»: zip με ΟΛΕΣ τις γραμμές που περνούν τα φίλτρα (όχι
+  // μόνο την ορατή σελίδα — το υποσύνολο δημοσιεύεται ΠΡΙΝ το slice(0, MAXROWS))
+  // + ξαναφτιαγμένο xlsx για το υποσύνολο. Κρυφό όσο δεν φιλτράρεται κάτι (το
+  // redraw() το εμφανίζει) — αλλιώς θα διπλασίαζε τη «Λήψη όλων». RAW run_id
+  // στο data attribute (το startFilteredZip κάνει encodeURIComponent μία φορά).
+  const filteredBtn =
+    `<button class="btn alt hidden" data-zip-filtered="${esc(manifest.run_id)}">Λήψη φιλτραρισμένων</button>`;
   h.innerHTML = `<h2 style="margin:.2rem 0"></h2>
     <div class="note">${dmy(manifest.from)} έως ${dmy(manifest.to)} ·
       <b>${manifest.n_rows}</b> άδειες${dupNote}</div>
     <div class="dl">
       <a class="btn" href="/runs/${rid}/${rid}.xlsx">Λήψη Excel</a>
       ${zipBtn}
+      ${filteredBtn}
       <span class="zipstat" id="zipstat-${rid}"></span>
+      <span class="zipstat" id="zipstat-filtered-${rid}"></span>
     </div>`;
   h.querySelector("h2").textContent = manifest.area;
   if (!manifest.geocoded && !geocodingNow) {
@@ -426,6 +435,9 @@ const PREC_COLORS = { "κτίσμα (PDF)": "#7b2d8b", "οδός+αριθμός"
                       "δήμος": "#8a8273" };
 const esc = s => String(s ?? "").replace(/[&<>"]/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+// για χρήση μέσα σε CSS attribute selector (το run_id μπορεί να έχει χαρακτήρες
+// που σπάνε τον selector) — CSS.escape υπάρχει σε όλους τους σύγχρονους browsers
+const cssEsc = s => (window.CSS && CSS.escape) ? CSS.escape(String(s)) : String(s);
 
 function addMapToggle(box, rows, runId) {
   const toggle = document.createElement("div");
@@ -638,6 +650,21 @@ function buildTable(rows, runId) {
     });
     box._filtered = view;
     if (box._onFilter) box._onFilter(view);
+    // δημοσιεύουμε το τρέχον φιλτραρισμένο υποσύνολο ώστε να το διαβάσει το
+    // module-scope startFilteredZip (τα δύο scope δεν μοιράζονται μεταβλητές).
+    // Κλειδί ανά runId ώστε πολλαπλά rendered run να μη συγκρούονται. ΠΡΟΣΟΧΗ:
+    // δημοσιεύεται ΠΡΙΝ το slice(0, MAXROWS) πιο κάτω, ώστε το zip να περιέχει
+    // ΟΛΕΣ τις γραμμές που περνούν τα φίλτρα — όχι μόνο όσες δείχνει ο πίνακας.
+    const active = view.length !== rows.length;
+    window.__demolitionsFilter = window.__demolitionsFilter || {};
+    window.__demolitionsFilter[runId] = {
+      active,
+      ada: view.map(r => r.ada),
+      pdfPaths: new Set(view.filter(r => r.pdf_path).map(r => r.pdf_path)),
+    };
+    // το κουμπί «Λήψη φιλτραρισμένων» έχει νόημα μόνο όταν φιλτράρεται κάτι
+    const fbtn = document.querySelector(`[data-zip-filtered="${cssEsc(runId)}"]`);
+    if (fbtn) fbtn.classList.toggle("hidden", !active);
     const total = view.length;
     view = view.slice(0, MAXROWS);
     const tbody = box.querySelector("tbody");
@@ -820,19 +847,51 @@ async function loadAbout() {
 import { downloadZip } from "/static/client-zip.js";
 
 const byId = id => document.getElementById(id);
-function setStatus(runId, txt, busy) {
-  const el = byId("zipstat-" + encodeURIComponent(runId));
+// prefix: "zipstat-" (Λήψη όλων) ή "zipstat-filtered-" (Λήψη φιλτραρισμένων)
+function setStatus(runId, txt, busy, prefix = "zipstat-") {
+  const el = byId(prefix + encodeURIComponent(runId));
   if (!el) return;
   el.textContent = "";
   if (busy) el.appendChild(Object.assign(            // περιστρεφόμενο spinner
     document.createElement("span"), { className: "spin" }));
   el.appendChild(document.createTextNode(txt));
 }
-function showServerFallback(runId) {
+// Κατεβάζει το φιλτραρισμένο server zip με POST: ένα κρυφό <form method="POST">
+// με ένα <input name="ada"> ανά ΑΔΑ → η λίστα ταξιδεύει στο σώμα (χωρίς όριο
+// μήκους URL, value-safe ακόμη κι αν ένα ΑΔΑ έχει κόμμα). Το submit ενός form
+// προκαλεί κανονικό browser download σε κάθε browser, χωρίς ανάγκη για
+// save-picker / επιπλέον user activation πέρα από το click.
+function postFilteredZip(runId, adaList) {
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = "/zip/" + encodeURIComponent(runId) + ".zip";
+  form.style.display = "none";
+  for (const a of adaList) {
+    const inp = document.createElement("input");
+    inp.type = "hidden";
+    inp.name = "ada";
+    inp.value = a;
+    form.appendChild(inp);
+  }
+  document.body.appendChild(form);
+  form.submit();
+  form.remove();
+}
+// Σύνδεσμος/κουμπί «Λήψη zip από τον server». Για το ΠΛΗΡΕΣ run (adaList null) ένα
+// απλό <a href> GET· για το ΦΙΛΤΡΑΡΙΣΜΕΝΟ (adaList λίστα) ένα κουμπί που κάνει
+// POST με κρυφό form (το GET θα ήταν τεράστιο/μη value-safe).
+function showServerFallback(runId, prefix = "zipstat-", adaList = null) {
   // δεν κάνουμε programmatic navigation (χωρίς user activation) — δίνουμε σύνδεσμο
-  const el = byId("zipstat-" + encodeURIComponent(runId));
-  if (el) {
-    el.textContent = "";
+  const el = byId(prefix + encodeURIComponent(runId));
+  if (!el) return;
+  el.textContent = "";
+  if (adaList) {
+    const a = document.createElement("a");
+    a.href = "#";
+    a.textContent = "Λήψη zip από τον server";
+    a.addEventListener("click", ev => { ev.preventDefault(); postFilteredZip(runId, adaList); });
+    el.appendChild(a);
+  } else {
     const a = document.createElement("a");
     a.href = "/zip/" + encodeURIComponent(runId) + ".zip";
     a.textContent = "Λήψη zip από τον server";
@@ -842,7 +901,9 @@ function showServerFallback(runId) {
 
 document.addEventListener("click", e => {
   const b = e.target.closest("[data-zip-run]");
-  if (b) { e.preventDefault(); startZip(b.dataset.zipRun, b.dataset.zipname); }
+  if (b) { e.preventDefault(); startZip(b.dataset.zipRun, b.dataset.zipname); return; }
+  const f = e.target.closest("[data-zip-filtered]");
+  if (f) { e.preventDefault(); startFilteredZip(f.dataset.zipFiltered); }
 });
 
 async function startZip(runId, zipname) {
@@ -913,6 +974,125 @@ async function startZip(runId, zipname) {
   } catch (err) {
     if (err && err.name === "AbortError") return;
     showServerFallback(runId);
+  }
+}
+
+// Λήψη ΜΟΝΟ των φιλτραρισμένων γραμμών: ξαναφτιαγμένο xlsx (από τον host, μικρό)
+// + τα PDF ΜΟΝΟ αυτών των γραμμών (στο client path απευθείας από το R2). Το
+// φιλτραρισμένο υποσύνολο το δημοσιεύει το classic-script redraw() στο
+// window.__demolitionsFilter[runId].
+const FPREFIX = "zipstat-filtered-";
+// FormData με ένα επαναλαμβανόμενο πεδίο "ada" ανά ΑΔΑ — value-safe & χωρίς όριο
+// μήκους URL· το διαβάζει ο server με request.form.getlist("ada").
+function adaForm(adaList) {
+  const fd = new FormData();
+  for (const a of adaList) fd.append("ada", a);
+  return fd;
+}
+async function startFilteredZip(runId) {
+  // ΣΕΙΡΑ ΚΡΙΣΙΜΗ (όπως στο startZip): showSaveFilePicker() ΧΩΡΙΣ προηγούμενο
+  // await, αλλιώς χάνεται το user activation.
+  const f = (window.__demolitionsFilter || {})[runId];
+  const ada = (f && f.ada && f.ada.length) ? f.ada : null;
+  if (!window.showSaveFilePicker) {           // μη-Chromium → server filtered zip
+    // κρυφό form-POST: η λίστα ΑΔΑ στο σώμα (όχι σε query string)· δεν χρειάζεται
+    // save-picker, ούτε επιπλέον user activation πέρα από το click.
+    postFilteredZip(runId, ada || []);
+    return;
+  }
+  let handle;
+  try {
+    handle = await window.showSaveFilePicker({   // ← το ΠΡΩΤΟ await
+      suggestedName: runId + "-φιλτραρισμένο.zip",
+      types: [{ description: "ZIP", accept: { "application/zip": [".zip"] } }],
+    });
+  } catch (err) {
+    if (err && err.name === "AbortError") return;   // ο χρήστης ακύρωσε
+    showServerFallback(runId, FPREFIX, ada || []);   // ο picker δεν είναι διαθέσιμος
+    return;
+  }
+  // αν λείπει το δημοσιευμένο υποσύνολο (σπάνιο) → server filtered zip στο handle
+  if (!ada) {
+    try {
+      setStatus(runId, "Δημιουργία zip στον server…", true, FPREFIX);
+      const sr = await fetch("/zip/" + encodeURIComponent(runId) + ".zip",
+        { method: "POST", body: adaForm([]) });
+      if (sr.ok && sr.body) {
+        await sr.body.pipeTo(await handle.createWritable());
+        setStatus(runId, "✓ αποθηκεύτηκε", false, FPREFIX);
+      } else { showServerFallback(runId, FPREFIX, []); }
+    } catch (err) {
+      if (!(err && err.name === "AbortError")) showServerFallback(runId, FPREFIX, []);
+    }
+    return;
+  }
+  try {
+    setStatus(runId, "Λήψη…", true, FPREFIX);
+    const m = await (await fetch(
+      "/api/runs/" + encodeURIComponent(runId) + "/zip-manifest")).json();
+    if (m.mode !== "client") {
+      // evicted/local → ο server φτιάχνει το φιλτραρισμένο zip, στο ΙΔΙΟ handle.
+      // POST: η λίστα ΑΔΑ στο σώμα (request.form.getlist), όχι σε query string.
+      setStatus(runId, "Δημιουργία zip στον server…", true, FPREFIX);
+      const sr = await fetch("/zip/" + encodeURIComponent(runId) + ".zip",
+        { method: "POST", body: adaForm(ada) });
+      if (sr.ok && sr.body) {
+        await sr.body.pipeTo(await handle.createWritable());
+        setStatus(runId, "✓ αποθηκεύτηκε", false, FPREFIX);
+      } else {
+        showServerFallback(runId, FPREFIX, ada);
+      }
+      return;
+    }
+    // client path: τα βαριά PDF έρχονται από το R2 (presigned) — κρατάμε ΜΟΝΟ
+    // όσα ανήκουν στις φιλτραρισμένες γραμμές, και ΠΕΤΑΜΕ το πλήρες xlsx.
+    const pdfFiles = m.files.filter(
+      x => x.name !== runId + ".xlsx" && f.pdfPaths.has(x.name));
+    // το μικρό xlsx του υποσυνόλου από τον host (POST — η λίστα ΑΔΑ είναι μεγάλη)
+    const xr = await fetch(
+      "/api/runs/" + encodeURIComponent(runId) + "/xlsx-filtered",
+      { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ada }) });
+    if (!xr.ok) { showServerFallback(runId, FPREFIX, ada); return; }
+    const xlsxBlob = await xr.blob();
+
+    const writable = await handle.createWritable();
+    const totalCount = pdfFiles.length + 1;          // +1 για το xlsx
+    setStatus(runId, "0/" + totalCount, true, FPREFIX);
+    let skipped = 0, i = 0;
+    async function* gen() {
+      // πρώτο μέλος: το ξαναφτιαγμένο xlsx (ίδιο όνομα με το πλήρες)
+      yield { name: runId + ".xlsx", input: xlsxBlob };
+      i++;
+      setStatus(runId, i + "/" + totalCount, true, FPREFIX);
+      for (const x of pdfFiles) {
+        const r = await fetch(x.url);
+        if (r.ok) yield { name: x.name, input: r };
+        else skipped++;                               // λείπει από το R2 (eviction)
+        i++;
+        setStatus(runId, i + "/" + totalCount, true, FPREFIX);
+      }
+    }
+    await downloadZip(gen()).body.pipeTo(writable);   // streaming στον δίσκο
+    if (skipped) {
+      // ελλιπές zip — ο server φτιάχνει το ΦΙΛΤΡΑΡΙΣΜΕΝΟ σετ πλήρες, με τα PDF που
+      // λείπουν να ξανακατεβαίνουν από τη Διαύγεια → δίνουμε σύνδεσμο (POST,
+      // ώστε η λίστα ΑΔΑ να μην μπει σε τεράστιο/μη value-safe query string).
+      const el = byId(FPREFIX + encodeURIComponent(runId));
+      if (el) {
+        el.textContent = "✓ αποθηκεύτηκε (" + skipped + " αρχεία λείπουν) ";
+        const a = document.createElement("a");
+        a.href = "#";
+        a.textContent = "ολοκληρωμένο φιλτραρισμένο zip από server";
+        a.addEventListener("click", ev => { ev.preventDefault(); postFilteredZip(runId, ada); });
+        el.appendChild(a);
+      }
+    } else {
+      setStatus(runId, "✓ αποθηκεύτηκε", false, FPREFIX);
+    }
+  } catch (err) {
+    if (err && err.name === "AbortError") return;
+    showServerFallback(runId, FPREFIX, ada);
   }
 }
 </script>
