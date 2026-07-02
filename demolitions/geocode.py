@@ -180,6 +180,14 @@ class Geocoder:
         for p in polis:
             if odos:
                 tiers.append((f"{odos}, {p}, Ελλάδα", "οδός"))
+        if not polis and odos:
+            # χωρίς «Πόλη/Οικισμός» αγκυρώνουμε την οδό στον δήμο — αλλιώς
+            # οι tiers οδού δεν χτίζονταν καθόλου και η ακρίβεια κατέρρεε
+            # αδικαιολόγητα σε «δήμος» παρότι υπάρχει διεύθυνση
+            if ar:
+                tiers.append((f"{odos} {ar}, Δήμος {dimos}, Ελλάδα",
+                              "οδός+αριθμός"))
+            tiers.append((f"{odos}, Δήμος {dimos}, Ελλάδα", "οδός"))
         for p in polis:
             tiers.append((f"{p}, Δήμος {dimos}, Ελλάδα", "οικισμός"))
             tiers.append((f"{p}, Ελλάδα", "οικισμός"))

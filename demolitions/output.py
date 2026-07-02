@@ -7,6 +7,24 @@ from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
+# Το openpyxl αποθηκεύει string που αρχίζει με «=» ως ΤΥΠΟ (data_type 'f'),
+# οπότε κείμενο τρίτων από τα PDF (περιγραφή, οδός, …) όπως
+# «=HYPERLINK("http://evil/",…)» θα ΕΚΤΕΛΟΥΝΤΑΝ στο Excel του αναγνώστη.
+# Τα «+ - @» το openpyxl τα γράφει ήδη ως κείμενο, αλλά τα κλειδώνουμε κι
+# αυτά ρητά (συμβάσεις τύπων/DDE του Excel) — άμυνα σε βάθος.
+_FORMULA_PREFIXES = ("=", "+", "-", "@")
+
+
+def _text_cell(ws, row, column, value):
+    """ws.cell() που δεν αφήνει ΠΟΤΕ τιμή τρίτων να γίνει τύπος Excel: ύποπτα
+    προθέματα αποθηκεύονται ρητά ως κείμενο (inline string στο xlsx), χωρίς
+    ορατό escape για τον αναγνώστη."""
+    cell = ws.cell(row=row, column=column, value=value)
+    if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
+        cell.data_type = "s"
+    return cell
+
+
 COLUMNS = [
     ("ΑΔΑ", "ada", 16),
     ("Ημ/νία έκδοσης", "date", 14),
@@ -59,7 +77,7 @@ def write_xlsx(rows, out_path):
                 cell.hyperlink = f"https://diavgeia.gov.gr/doc/{row['ada']}?inline=true"
                 cell.font = Font(color="0563C1", underline="single")
                 continue
-            cell = ws.cell(row=r, column=col, value=value)
+            cell = _text_cell(ws, r, col, value)
             if key == "date":
                 cell.number_format = "DD/MM/YYYY"
             if key == "ada":
@@ -86,7 +104,7 @@ def _pivot_sheet(wb, title, rows, bold):
     ws2 = wb.create_sheet(title)
     ws2.cell(row=1, column=1, value="Έτος").font = bold
     for c, d in enumerate(dimoi, 2):
-        ws2.cell(row=1, column=c, value=d).font = bold
+        _text_cell(ws2, 1, c, d).font = bold      # όνομα δήμου = δεδομένα γραμμών
         ws2.column_dimensions[get_column_letter(c)].width = max(14, len(d) + 2)
     ws2.cell(row=1, column=len(dimoi) + 2, value="Σύνολο").font = bold
     for r, y in enumerate(years, 2):

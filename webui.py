@@ -97,9 +97,15 @@ def _result_payload(run_id):
 
 
 def _client_ip():
+    # Πίσω από ΕΝΑΝ έμπιστο proxy (Render edge) μόνο το ΤΕΛΕΥΤΑΙΟ στοιχείο
+    # του X-Forwarded-For είναι αξιόπιστο (το προσθέτει ο ίδιος ο proxy)· τα
+    # αριστερότερα τα ελέγχει ο πελάτης — με το πρώτο, ένα τυχαίο XFF ανά
+    # αίτημα θα έδινε φρέσκο rate-limit bucket κάθε φορά
     forwarded = request.headers.get("X-Forwarded-For", "")
     if forwarded:
-        return forwarded.split(",", 1)[0].strip()
+        ip = forwarded.rsplit(",", 1)[-1].strip()
+        if ip:
+            return ip
     return request.remote_addr or "unknown"
 
 
@@ -133,6 +139,13 @@ def limit_expensive_routes():
         "serve_zip": "zip",
         "api_zip_manifest": "zip",
         "api_xlsx_filtered": "zip",
+        "serve_run_file": "zip",       # streamάρει μέσω του metered host
+        # τα καταστροφικά DELETE δεν είναι αυθεντικοποιημένα — τουλάχιστον να
+        # μην μπορούν να σφυροκοπούν τα delete-object του R2 χωρίς όριο
+        "api_delete_all": "delete",
+        "api_delete_all_pdfs": "delete",
+        "api_delete_run": "delete",
+        "api_delete_pdfs": "delete",
     }.get(request.endpoint)
     if not action:
         return None
@@ -140,7 +153,7 @@ def limit_expensive_routes():
     if retry_after is None:
         return None
     headers = {"Retry-After": str(retry_after)}
-    if request.endpoint == "serve_zip":
+    if request.endpoint in ("serve_zip", "serve_run_file"):
         return Response("Rate limit exceeded.", status=429, headers=headers)
     return jsonify({
         "error": "Πάρα πολλά αιτήματα από την ίδια διεύθυνση. Δοκιμάστε ξανά σε λίγο."
@@ -472,12 +485,11 @@ def _load_rows(run_id):
     return json.loads(b"".join(member[0])) if member else []
 
 
-def _filtered_xlsx_bytes(run_id, ada_set):
-    """Φτιάχνει xlsx (bytes) ΜΟΝΟ για τις γραμμές του run των οποίων το ΑΔΑ
-    ανήκει στο `ada_set`, διατηρώντας την αρχική σειρά του rows.json. Τα pivot
-    φύλλα ξαναϋπολογίζονται για το υποσύνολο. Άγνωστα ΑΔΑ αγνοούνται. Επιστρέφει
-    None αν δεν μένει καμία γραμμή."""
-    subset = [r for r in _load_rows(run_id) if r.get("ada") in ada_set]
+def _filtered_xlsx_bytes(subset):
+    """Φτιάχνει xlsx (bytes) για το ήδη φιλτραρισμένο υποσύνολο γραμμών ενός
+    run (με τη σειρά του rows.json — ο καλών φιλτράρει χωρίς αναδιάταξη). Τα
+    pivot φύλλα ξαναϋπολογίζονται για το υποσύνολο. Επιστρέφει None αν δεν
+    υπάρχει καμία γραμμή."""
     if not subset:
         return None
     buf = io.BytesIO()
@@ -552,8 +564,9 @@ def serve_zip(run_id):
         # ξαναφτιάχνουμε το xlsx για το υποσύνολο (pivot ανά υποσύνολο)· είναι
         # μικρό (~KB) οπότε το ετοιμάζουμε αμέσως αντί lazy. Η σειρά των γραμμών
         # ακολουθεί το rows.json (όχι την τρέχουσα ταξινόμηση του πίνακα) — ίδια
-        # συμπεριφορά με το πλήρες xlsx, σκόπιμα συνεπής.
-        data = _filtered_xlsx_bytes(run_id, ada_set)
+        # συμπεριφορά με το πλήρες xlsx, σκόπιμα συνεπής. Τα `rows` είναι ήδη
+        # το φιλτραρισμένο υποσύνολο — δεν ξαναδιαβάζουμε το rows.json.
+        data = _filtered_xlsx_bytes(rows)
         if data is not None:
             zs.add(data=iter([data]), arcname=xlsx)
     else:
@@ -609,7 +622,9 @@ def api_xlsx_filtered(run_id):
     ada = data.get("ada")
     if not isinstance(ada, list) or not all(isinstance(a, str) for a in ada):
         return jsonify({"error": "Το «ada» πρέπει να είναι λίστα από strings."}), 400
-    body = _filtered_xlsx_bytes(run_id, set(ada))
+    ada_set = set(ada)
+    body = _filtered_xlsx_bytes(
+        [r for r in _load_rows(run_id) if r.get("ada") in ada_set])
     if body is None:                       # κανένα γνωστό ΑΔΑ -> τίποτα να σταλεί
         return jsonify({"error": "Καμία γραμμή δεν ταιριάζει με τα ΑΔΑ."}), 400
     name = f"{run_id}-φιλτραρισμένο.xlsx"

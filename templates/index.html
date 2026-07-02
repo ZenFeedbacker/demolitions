@@ -663,8 +663,11 @@ function buildTable(rows, runId) {
       pdfPaths: new Set(view.filter(r => r.pdf_path).map(r => r.pdf_path)),
     };
     // το κουμπί «Λήψη φιλτραρισμένων» έχει νόημα μόνο όταν φιλτράρεται κάτι
+    // ΚΑΙ μένει τουλάχιστον μία γραμμή — με 0 γραμμές το κενό φίλτρο θα
+    // σήμαινε server-side «χωρίς φίλτρο» και θα κατέβαινε ΟΛΟ το run με
+    // όνομα «…-φιλτραρισμένο»
     const fbtn = document.querySelector(`[data-zip-filtered="${cssEsc(runId)}"]`);
-    if (fbtn) fbtn.classList.toggle("hidden", !active);
+    if (fbtn) fbtn.classList.toggle("hidden", !active || !view.length);
     const total = view.length;
     view = view.slice(0, MAXROWS);
     const tbody = box.querySelector("tbody");
@@ -993,6 +996,14 @@ async function startFilteredZip(runId) {
   // ΣΕΙΡΑ ΚΡΙΣΙΜΗ (όπως στο startZip): showSaveFilePicker() ΧΩΡΙΣ προηγούμενο
   // await, αλλιώς χάνεται το user activation.
   const f = (window.__demolitionsFilter || {})[runId];
+  // φίλτρο με ΜΗΔΕΝ αποτελέσματα: δεν υπάρχει τίποτα να ληφθεί. Χωρίς αυτόν
+  // τον φράχτη το κενό ada περνούσε ως «χωρίς φίλτρο» στον server και
+  // κατέβαινε ΟΛΟΚΛΗΡΟ το run με όνομα «…-φιλτραρισμένο» (το κουμπί είναι
+  // ήδη κρυφό τότε — ο φράχτης καλύπτει και κάθε άλλο μονοπάτι κλήσης)
+  if (f && f.ada && f.ada.length === 0) {
+    setStatus(runId, "Κανένα αποτέλεσμα με τα τρέχοντα φίλτρα.", false, FPREFIX);
+    return;
+  }
   const ada = (f && f.ada && f.ada.length) ? f.ada : null;
   if (!window.showSaveFilePicker) {           // μη-Chromium → server filtered zip
     // κρυφό form-POST: η λίστα ΑΔΑ στο σώμα (όχι σε query string)· δεν χρειάζεται
